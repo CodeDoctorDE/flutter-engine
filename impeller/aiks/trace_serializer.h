@@ -58,6 +58,10 @@ class TraceSerializer {
 
   void Write(const std::vector<Color>& matrices);
 
+  void Write(const SourceRectConstraint& src_rect_constraint);
+
+  void Write(const ContentBoundsPromise& promise);
+
  private:
   std::stringstream buffer_;
 };

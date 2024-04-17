@@ -5,7 +5,6 @@
 #ifndef FLUTTER_IMPELLER_PLAYGROUND_BACKEND_VULKAN_PLAYGROUND_IMPL_VK_H_
 #define FLUTTER_IMPELLER_PLAYGROUND_BACKEND_VULKAN_PLAYGROUND_IMPL_VK_H_
 
-#include "flutter/fml/macros.h"
 #include "impeller/playground/playground_impl.h"
 #include "impeller/renderer/backend/vulkan/vk.h"
 
@@ -13,6 +12,8 @@ namespace impeller {
 
 class PlaygroundImplVK final : public PlaygroundImpl {
  public:
+  static bool IsVulkanDriverPresent();
+
   explicit PlaygroundImplVK(PlaygroundSwitches switches);
 
   ~PlaygroundImplVK();
@@ -27,6 +28,7 @@ class PlaygroundImplVK final : public PlaygroundImpl {
   static void DestroyWindowHandle(WindowHandle handle);
   using UniqueHandle = std::unique_ptr<void, decltype(&DestroyWindowHandle)>;
   UniqueHandle handle_;
+  ISize size_ = {1, 1};
 
   // A global Vulkan instance which ensures that the Vulkan library will remain
   // loaded throughout the lifetime of the process.

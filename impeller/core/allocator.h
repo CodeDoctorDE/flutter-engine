@@ -44,9 +44,11 @@ class Allocator {
 
   virtual ISize GetMaxTextureSizeSupported() const = 0;
 
-  /// @brief Increment an internal frame used to cycle through a ring buffer of
-  /// allocation pools.
-  virtual void DidAcquireSurfaceFrame();
+  /// @brief Write debug memory usage information to the dart timeline in debug
+  ///        and profile modes.
+  ///
+  ///        This is only supported on the Vulkan backend.
+  virtual void DebugTraceMemoryStatistics() const {};
 
  protected:
   Allocator();

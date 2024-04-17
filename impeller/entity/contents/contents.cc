@@ -21,7 +21,14 @@ ContentContextOptions OptionsFromPass(const RenderPass& pass) {
   ContentContextOptions opts;
   opts.sample_count = pass.GetSampleCount();
   opts.color_attachment_pixel_format = pass.GetRenderTargetPixelFormat();
-  opts.has_stencil_attachment = pass.HasStencilAttachment();
+
+  bool has_depth_stencil_attachments =
+      pass.HasDepthAttachment() && pass.HasStencilAttachment();
+  FML_DCHECK(pass.HasDepthAttachment() == pass.HasStencilAttachment());
+
+  opts.has_depth_stencil_attachments = has_depth_stencil_attachments;
+  opts.depth_compare = CompareFunction::kGreater;
+  opts.stencil_mode = ContentContextOptions::StencilMode::kIgnore;
   return opts;
 }
 
@@ -60,9 +67,16 @@ std::optional<Snapshot> Contents::RenderToSnapshot(
     std::optional<Rect> coverage_limit,
     const std::optional<SamplerDescriptor>& sampler_descriptor,
     bool msaa_enabled,
+    int32_t mip_count,
     const std::string& label) const {
   auto coverage = GetCoverage(entity);
   if (!coverage.has_value()) {
+    return std::nullopt;
+  }
+
+  std::shared_ptr<CommandBuffer> command_buffer =
+      renderer.GetContext()->CreateCommandBuffer();
+  if (!command_buffer) {
     return std::nullopt;
   }
 
@@ -79,8 +93,9 @@ std::optional<Snapshot> Contents::RenderToSnapshot(
     }
   }
 
-  auto texture = renderer.MakeSubpass(
-      label, ISize::Ceil(coverage->GetSize()),
+  ISize subpass_size = ISize::Ceil(coverage->GetSize());
+  fml::StatusOr<RenderTarget> render_target = renderer.MakeSubpass(
+      label, subpass_size, command_buffer,
       [&contents = *this, &entity, &coverage](const ContentContext& renderer,
                                               RenderPass& pass) -> bool {
         Entity sub_entity;
@@ -90,14 +105,21 @@ std::optional<Snapshot> Contents::RenderToSnapshot(
             entity.GetTransform());
         return contents.Render(renderer, sub_entity, pass);
       },
-      msaa_enabled);
+      msaa_enabled, /*depth_stencil_enabled=*/true,
+      std::min(mip_count, static_cast<int32_t>(subpass_size.MipCount())));
 
-  if (!texture) {
+  if (!render_target.ok()) {
+    return std::nullopt;
+  }
+  if (!renderer.GetContext()
+           ->GetCommandQueue()
+           ->Submit(/*buffers=*/{std::move(command_buffer)})
+           .ok()) {
     return std::nullopt;
   }
 
   auto snapshot = Snapshot{
-      .texture = texture,
+      .texture = render_target.value().GetRenderTargetTexture(),
       .transform = Matrix::MakeTranslation(coverage->GetOrigin()),
   };
   if (sampler_descriptor.has_value()) {

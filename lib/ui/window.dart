@@ -42,6 +42,8 @@ class Display {
 /// Each [FlutterView] has its own layer tree that is rendered
 /// whenever [render] is called on it with a [Scene].
 ///
+/// References to [FlutterView] objects are obtained via the [PlatformDispatcher].
+///
 /// ## Insets and Padding
 ///
 /// {@animation 300 300 https://flutter.github.io/assets-for-api-docs/assets/widgets/window_padding.mp4}
@@ -372,16 +374,11 @@ class FlutterView {
   /// * [RendererBinding], the Flutter framework class which manages layout and
   ///   painting.
   void render(Scene scene, {Size? size}) {
-    // Duplicated calls or calls outside of onBeginFrame/onDrawFrame (indicated
-    // by _renderedViews being null) are ignored. See _renderedViews.
-    final bool validRender = platformDispatcher._renderedViews?.add(this) ?? false;
-    if (validRender) {
-      _render(scene as _NativeScene, size?.width ?? physicalSize.width, size?.height ?? physicalSize.height);
-    }
+    _render(viewId, scene as _NativeScene, size?.width ?? physicalSize.width, size?.height ?? physicalSize.height);
   }
 
-  @Native<Void Function(Pointer<Void>, Double, Double)>(symbol: 'PlatformConfigurationNativeApi::Render')
-  external static void _render(_NativeScene scene, double width, double height);
+  @Native<Void Function(Int64, Pointer<Void>, Double, Double)>(symbol: 'PlatformConfigurationNativeApi::Render')
+  external static void _render(int viewId, _NativeScene scene, double width, double height);
 
   /// Change the retained semantics data about this [FlutterView].
   ///

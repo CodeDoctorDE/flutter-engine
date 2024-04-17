@@ -279,6 +279,10 @@ DEF_SWITCH(EnableOpenGLGPUTracing,
            "enable-opengl-gpu-tracing",
            "Enable tracing of GPU execution time when using the Impeller "
            "OpenGLES backend.")
+DEF_SWITCH(EnableVulkanGPUTracing,
+           "enable-vulkan-gpu-tracing",
+           "Enable tracing of GPU execution time when using the Impeller "
+           "Vulkan backend.")
 DEF_SWITCH(LeakVM,
            "leak-vm",
            "When the last shell shuts down, the shared VM is leaked by default "
@@ -294,6 +298,9 @@ DEF_SWITCH(
 DEF_SWITCH(EnableEmbedderAPI,
            "enable-embedder-api",
            "Enable the embedder api. Defaults to false. iOS only.")
+DEF_SWITCH(EnablePlatformIsolates,
+           "enable-platform-isolates",
+           "Enable support for isolates that run on the platform thread.")
 DEF_SWITCHES_END
 
 void PrintUsage(const std::string& executable_name);

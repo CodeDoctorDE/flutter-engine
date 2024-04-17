@@ -307,6 +307,20 @@ FLUTTER_ASSERT_ARC
   XCTAssertEqual(inputView.keyboardType, UIKeyboardTypeURL);
 }
 
+- (void)testVisiblePasswordUseAlphanumeric {
+  NSDictionary* config = self.mutableTemplateCopy;
+  [config setValue:@{@"name" : @"TextInputType.visiblePassword"} forKey:@"inputType"];
+  [self setClientId:123 configuration:config];
+
+  // Find all the FlutterTextInputViews we created.
+  NSArray<FlutterTextInputView*>* inputFields = self.installedInputViews;
+
+  FlutterTextInputView* inputView = inputFields[0];
+
+  // Verify keyboardType is set to the value specified in config.
+  XCTAssertEqual(inputView.keyboardType, UIKeyboardTypeASCIICapable);
+}
+
 - (void)testSettingKeyboardTypeNoneDisablesSystemKeyboard {
   NSDictionary* config = self.mutableTemplateCopy;
   [config setValue:@{@"name" : @"TextInputType.none"} forKey:@"inputType"];
@@ -1285,15 +1299,15 @@ FLUTTER_ASSERT_ARC
     [mockInputView insertText:@"aaaa"];
     [mockInputView selectAll:nil];
 
-    XCTAssertFalse([mockInputView canPerformAction:@selector(copy:) withSender:NULL]);
+    XCTAssertTrue([mockInputView canPerformAction:@selector(copy:) withSender:NULL]);
     XCTAssertTrue([mockInputView canPerformAction:@selector(copy:) withSender:@"sender"]);
     XCTAssertFalse([mockInputView canPerformAction:@selector(paste:) withSender:NULL]);
     XCTAssertFalse([mockInputView canPerformAction:@selector(paste:) withSender:@"sender"]);
 
     [mockInputView copy:NULL];
-    XCTAssertFalse([mockInputView canPerformAction:@selector(copy:) withSender:NULL]);
+    XCTAssertTrue([mockInputView canPerformAction:@selector(copy:) withSender:NULL]);
     XCTAssertTrue([mockInputView canPerformAction:@selector(copy:) withSender:@"sender"]);
-    XCTAssertFalse([mockInputView canPerformAction:@selector(paste:) withSender:NULL]);
+    XCTAssertTrue([mockInputView canPerformAction:@selector(paste:) withSender:NULL]);
     XCTAssertTrue([mockInputView canPerformAction:@selector(paste:) withSender:@"sender"]);
   }
 }

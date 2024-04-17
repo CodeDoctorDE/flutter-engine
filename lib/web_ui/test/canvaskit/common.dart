@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'dart:async';
+import 'dart:js_interop';
 import 'dart:typed_data';
 
 import 'package:test/test.dart';
@@ -19,16 +20,16 @@ export '../common/rendering.dart' show renderScene;
 const MethodCodec codec = StandardMethodCodec();
 
 /// Common test setup for all CanvasKit unit-tests.
-void setUpCanvasKitTest() {
+void setUpCanvasKitTest({bool withImplicitView = false}) {
   setUpUnitTests(
+    withImplicitView: withImplicitView,
     emulateTesterEnvironment: false,
     setUpTestViewDimensions: false,
   );
 
-  setUp(() => renderer.fontCollection.fontFallbackManager!.downloadQueue
-      .fallbackFontUrlPrefixOverride = 'assets/fallback_fonts/');
-  tearDown(() => renderer.fontCollection.fontFallbackManager!.downloadQueue
-      .fallbackFontUrlPrefixOverride = null);
+  setUp(() => debugOverrideJsConfiguration(<String, Object?>{
+        'fontFallbackBaseUrl': 'assets/fallback_fonts/',
+      }.jsify() as JsFlutterConfiguration?));
 }
 
 /// Convenience getter for the implicit view.

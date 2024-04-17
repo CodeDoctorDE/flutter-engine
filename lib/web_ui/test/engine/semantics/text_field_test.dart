@@ -12,11 +12,13 @@ import 'package:test/test.dart';
 import 'package:ui/src/engine.dart' hide window;
 import 'package:ui/ui.dart' as ui;
 
+import '../../common/test_initialization.dart';
 import 'semantics_tester.dart';
 
-final InputConfiguration singlelineConfig = InputConfiguration();
+final InputConfiguration singlelineConfig = InputConfiguration(viewId: kImplicitViewId);
 
 final InputConfiguration multilineConfig = InputConfiguration(
+  viewId: kImplicitViewId,
   inputType: EngineInputType.multiline,
   inputAction: 'TextInputAction.newline',
 );
@@ -33,7 +35,9 @@ void main() {
 }
 
 void testMain() {
-  ensureFlutterViewEmbedderInitialized();
+  setUpAll(() async {
+    await bootstrapAndRunApp(withImplicitView: true);
+  });
 
   setUp(() {
     EngineSemantics.debugResetSemantics();

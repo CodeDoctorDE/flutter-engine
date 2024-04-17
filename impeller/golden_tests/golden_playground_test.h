@@ -7,12 +7,12 @@
 
 #include <memory>
 
-#include "flutter/fml/macros.h"
 #include "flutter/impeller/aiks/aiks_context.h"
 #include "flutter/impeller/playground/playground.h"
 #include "flutter/impeller/renderer/render_target.h"
 #include "flutter/testing/testing.h"
 #include "impeller/typographer/typographer_context.h"
+#include "third_party/imgui/imgui.h"
 
 #if FML_OS_MACOSX
 #include "flutter/fml/platform/darwin/scoped_nsautorelease_pool.h"
@@ -43,14 +43,19 @@ class GoldenPlaygroundTest
 
   bool OpenPlaygroundHere(AiksPlaygroundCallback callback);
 
+  static bool ImGuiBegin(const char* name,
+                         bool* p_open,
+                         ImGuiWindowFlags flags);
+
   std::shared_ptr<Texture> CreateTextureForFixture(
       const char* fixture_name,
       bool enable_mipmapping = false) const;
 
-  std::shared_ptr<RuntimeStage> OpenAssetAsRuntimeStage(
-      const char* asset_name) const;
+  RuntimeStage::Map OpenAssetAsRuntimeStage(const char* asset_name) const;
 
   std::shared_ptr<Context> GetContext() const;
+
+  std::shared_ptr<Context> MakeContext() const;
 
   Point GetContentScale() const;
 

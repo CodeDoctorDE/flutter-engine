@@ -137,6 +137,9 @@ static UIKeyboardType ToUIKeyboardType(NSDictionary* type) {
   if ([inputType isEqualToString:@"TextInputType.url"]) {
     return UIKeyboardTypeURL;
   }
+  if ([inputType isEqualToString:@"TextInputType.visiblePassword"]) {
+    return UIKeyboardTypeASCIICapable;
+  }
   return UIKeyboardTypeDefault;
 }
 
@@ -304,14 +307,12 @@ static UITextContentType ToUITextContentType(NSArray<NSString*>* hints) {
     return UITextContentTypePassword;
   }
 
-  if (@available(iOS 12.0, *)) {
-    if ([hint isEqualToString:@"oneTimeCode"]) {
-      return UITextContentTypeOneTimeCode;
-    }
+  if ([hint isEqualToString:@"oneTimeCode"]) {
+    return UITextContentTypeOneTimeCode;
+  }
 
-    if ([hint isEqualToString:@"newPassword"]) {
-      return UITextContentTypeNewPassword;
-    }
+  if ([hint isEqualToString:@"newPassword"]) {
+    return UITextContentTypeNewPassword;
   }
 
   return hints[0];
@@ -407,11 +408,10 @@ static BOOL IsFieldPasswordRelated(NSDictionary* configuration) {
     return YES;
   }
 
-  if (@available(iOS 12.0, *)) {
-    if ([contentType isEqualToString:UITextContentTypeNewPassword]) {
-      return YES;
-    }
+  if ([contentType isEqualToString:UITextContentTypeNewPassword]) {
+    return YES;
   }
+
   return NO;
 }
 
@@ -1145,14 +1145,9 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
 }
 
 - (BOOL)canPerformAction:(SEL)action withSender:(id)sender {
-  // When scribble is available, the FlutterTextInputView will display the native toolbar unless
-  // these text editing actions are disabled.
-  if ([self isScribbleAvailable] && sender == NULL) {
-    return NO;
-  }
   if (action == @selector(paste:)) {
     // Forbid pasting images, memojis, or other non-string content.
-    return [UIPasteboard generalPasteboard].string != nil;
+    return [UIPasteboard generalPasteboard].hasStrings;
   }
 
   return [super canPerformAction:action withSender:sender];

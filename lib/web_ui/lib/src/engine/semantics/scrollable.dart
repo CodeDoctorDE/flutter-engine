@@ -24,7 +24,11 @@ import 'package:ui/ui.dart' as ui;
 /// viewport "scrollTop" may take positive values.
 class Scrollable extends PrimaryRoleManager {
   Scrollable(SemanticsObject semanticsObject)
-      : super.withBasics(PrimaryRole.scrollable, semanticsObject) {
+      : super.withBasics(
+          PrimaryRole.scrollable,
+          semanticsObject,
+          labelRepresentation: LeafLabelRepresentation.ariaLabel,
+        ) {
     _scrollOverflowElement.style
       ..position = 'absolute'
       ..transformOrigin = '0 0 0'
@@ -239,4 +243,7 @@ class Scrollable extends PrimaryRoleManager {
       _gestureModeListener = null;
     }
   }
+
+  @override
+  bool focusAsRouteDefault() => focusable?.focusAsRouteDefault() ?? false;
 }

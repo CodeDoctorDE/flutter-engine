@@ -18,6 +18,8 @@
 #include "flutter/display_list/effects/dl_path_effect.h"
 #include "flutter/display_list/image/dl_image.h"
 
+#include "flutter/impeller/geometry/path.h"
+
 namespace flutter {
 
 class DisplayList;
@@ -48,6 +50,46 @@ class DlOpReceiver {
  public:
   // MaxDrawPointsCount * sizeof(SkPoint) must be less than 1 << 32
   static constexpr int kMaxDrawPointsCount = ((1 << 29) - 1);
+
+  // ---------------------------------------------------------------------
+  // The CacheablePath forms of the drawPath, clipPath, and drawShadow
+  // methods are only called if the DlOpReceiver indicates that it prefers
+  // impeller paths by returning true from |PrefersImpellerPaths|.
+  // Note that we pass in both the SkPath and (a place to cache the)
+  // impeller::Path forms of the path since the SkPath version can contain
+  // information about the type of path that lets the receiver optimize
+  // the operation (and potentially avoid the need to cache it).
+  // It is up to the receiver to convert the path to Impeller form and
+  // cache it to avoid needing to do a lot of Impeller-specific processing
+  // inside the DisplayList code.
+
+  virtual bool PrefersImpellerPaths() const { return false; }
+
+  struct CacheablePath {
+    explicit CacheablePath(const SkPath& path) : sk_path(path) {}
+
+    const SkPath sk_path;
+    mutable impeller::Path cached_impeller_path;
+
+    bool operator==(const CacheablePath& other) const {
+      return sk_path == other.sk_path;
+    }
+  };
+
+  virtual void clipPath(const CacheablePath& cache,
+                        ClipOp clip_op,
+                        bool is_aa) {
+    FML_UNREACHABLE();
+  }
+  virtual void drawPath(const CacheablePath& cache) { FML_UNREACHABLE(); }
+  virtual void drawShadow(const CacheablePath& cache,
+                          const DlColor color,
+                          const SkScalar elevation,
+                          bool transparent_occluder,
+                          SkScalar dpr) {
+    FML_UNREACHABLE();
+  }
+  // ---------------------------------------------------------------------
 
   // The following methods are nearly 1:1 with the methods on DlPaint and
   // carry the same meanings. Each method sets a persistent value for the
@@ -80,6 +122,11 @@ class DlOpReceiver {
   // attributes will be applied to the save layer surface while rendering
   // it back to the current surface. If the flag is false then this method
   // is equivalent to |SkCanvas::saveLayer| with a null paint object.
+  //
+  // The |options| parameter can also specify whether the bounds came from
+  // the caller who recorded the operation, or whether they were calculated
+  // by the DisplayListBuilder.
+  //
   // The |options| parameter may contain other options that indicate some
   // specific optimizations may be made by the underlying implementation
   // to avoid creating a temporary layer, these optimization options will
@@ -87,10 +134,36 @@ class DlOpReceiver {
   // specified in calling a |DisplayListBuilder| as they will be ignored.
   // The |backdrop| filter, if not null, is used to initialize the new
   // layer before further rendering happens.
-  virtual void saveLayer(const SkRect* bounds,
+  virtual void saveLayer(const SkRect& bounds,
                          const SaveLayerOptions options,
                          const DlImageFilter* backdrop = nullptr) = 0;
   virtual void restore() = 0;
+
+  // ---------------------------------------------------------------------
+  // Legacy helper method for older callers that use the null-ness of
+  // the bounds to indicate if they should be recorded or computed.
+  // This method will not be called on a |DlOpReceiver| that is passed
+  // to the |DisplayList::Dispatch()| method, so client receivers should
+  // ignore it for their implementation purposes.
+  //
+  // DlOpReceiver methods are generally meant to ONLY be output from a
+  // previously recorded DisplayList so this method is really only used
+  // from testing methods that bypass the public builder APIs for legacy
+  // convenience or for internal white-box testing of the DisplayList
+  // internals. Such methods should eventually be converted to using the
+  // public DisplayListBuilder/DlCanvas public interfaces where possible,
+  // as tracked in:
+  // https://github.com/flutter/flutter/issues/144070
+  virtual void saveLayer(const SkRect* bounds,
+                         const SaveLayerOptions options,
+                         const DlImageFilter* backdrop = nullptr) final {
+    if (bounds) {
+      saveLayer(*bounds, options.with_bounds_from_caller(), backdrop);
+    } else {
+      saveLayer(SkRect(), options.without_bounds_from_caller(), backdrop);
+    }
+  }
+  // ---------------------------------------------------------------------
 
   virtual void translate(SkScalar tx, SkScalar ty) = 0;
   virtual void scale(SkScalar sx, SkScalar sy) = 0;

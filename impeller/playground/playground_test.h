@@ -37,8 +37,7 @@ class PlaygroundTest : public Playground,
   std::unique_ptr<fml::Mapping> OpenAssetAsMapping(
       std::string asset_name) const override;
 
-  std::shared_ptr<RuntimeStage> OpenAssetAsRuntimeStage(
-      const char* asset_name) const;
+  RuntimeStage::Map OpenAssetAsRuntimeStage(const char* asset_name) const;
 
   // |Playground|
   std::string GetWindowTitle() const override;
@@ -64,6 +63,33 @@ class PlaygroundTest : public Playground,
       ::testing::Values(PlaygroundBackend::kMetal,                           \
                         PlaygroundBackend::kOpenGLES,                        \
                         PlaygroundBackend::kVulkan),                         \
+      [](const ::testing::TestParamInfo<PlaygroundTest::ParamType>& info) {  \
+        return PlaygroundBackendToString(info.param);                        \
+      });
+
+#define INSTANTIATE_METAL_PLAYGROUND_SUITE(playground)                       \
+  [[maybe_unused]] const char* kYouInstantiated##playground##MultipleTimes = \
+      "";                                                                    \
+  INSTANTIATE_TEST_SUITE_P(                                                  \
+      Play, playground, ::testing::Values(PlaygroundBackend::kMetal),        \
+      [](const ::testing::TestParamInfo<PlaygroundTest::ParamType>& info) {  \
+        return PlaygroundBackendToString(info.param);                        \
+      });
+
+#define INSTANTIATE_VULKAN_PLAYGROUND_SUITE(playground)                      \
+  [[maybe_unused]] const char* kYouInstantiated##playground##MultipleTimes = \
+      "";                                                                    \
+  INSTANTIATE_TEST_SUITE_P(                                                  \
+      Play, playground, ::testing::Values(PlaygroundBackend::kVulkan),       \
+      [](const ::testing::TestParamInfo<PlaygroundTest::ParamType>& info) {  \
+        return PlaygroundBackendToString(info.param);                        \
+      });
+
+#define INSTANTIATE_OPENGLES_PLAYGROUND_SUITE(playground)                    \
+  [[maybe_unused]] const char* kYouInstantiated##playground##MultipleTimes = \
+      "";                                                                    \
+  INSTANTIATE_TEST_SUITE_P(                                                  \
+      Play, playground, ::testing::Values(PlaygroundBackend::kOpenGLES),     \
       [](const ::testing::TestParamInfo<PlaygroundTest::ParamType>& info) {  \
         return PlaygroundBackendToString(info.param);                        \
       });

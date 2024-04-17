@@ -23,6 +23,8 @@ class Entity {
   static constexpr BlendMode kLastPipelineBlendMode = BlendMode::kModulate;
   static constexpr BlendMode kLastAdvancedBlendMode = BlendMode::kLuminosity;
 
+  static constexpr Scalar kDepthEpsilon = 1.0f / 262144.0;
+
   enum class RenderingMode {
     /// In direct mode, the Entity's transform is used as the current
     /// local-to-screen transform matrix.
@@ -62,19 +64,26 @@ class Entity {
   };
 
   /// @brief  Create an entity that can be used to render a given snapshot.
-  static std::optional<Entity> FromSnapshot(
-      const std::optional<Snapshot>& snapshot,
-      BlendMode blend_mode = BlendMode::kSourceOver,
-      uint32_t clip_depth = 0);
+  static Entity FromSnapshot(const Snapshot& snapshot,
+                             BlendMode blend_mode = BlendMode::kSourceOver);
 
   Entity();
 
   ~Entity();
 
-  Entity(Entity&&) = default;
+  Entity(Entity&&);
 
   /// @brief  Get the global transform matrix for this Entity.
   const Matrix& GetTransform() const;
+
+  /// @brief  Get the vertex shader transform used for drawing this Entity.
+  Matrix GetShaderTransform(const RenderPass& pass) const;
+
+  /// @brief  Static utility that computes the vertex shader transform used for
+  ///         drawing an Entity with a given the clip depth and RenderPass size.
+  static Matrix GetShaderTransform(Scalar clip_depth,
+                                   const RenderPass& pass,
+                                   const Matrix& transform);
 
   /// @brief  Set the global transform matrix for this Entity.
   void SetTransform(const Matrix& transform);
@@ -95,6 +104,14 @@ class Entity {
   void IncrementStencilDepth(uint32_t increment);
 
   uint32_t GetClipDepth() const;
+
+  void SetNewClipDepth(uint32_t clip_depth);
+
+  uint32_t GetNewClipDepth() const;
+
+  float GetShaderClipDepth() const;
+
+  static float GetShaderClipDepth(uint32_t clip_depth);
 
   void SetBlendMode(BlendMode blend_mode);
 
@@ -119,12 +136,13 @@ class Entity {
   Entity Clone() const;
 
  private:
-  Entity(const Entity&) = default;
+  Entity(const Entity&);
 
   Matrix transform_;
   std::shared_ptr<Contents> contents_;
   BlendMode blend_mode_ = BlendMode::kSourceOver;
   uint32_t clip_depth_ = 0u;
+  uint32_t new_clip_depth_ = 1u;
   mutable Capture capture_;
 };
 

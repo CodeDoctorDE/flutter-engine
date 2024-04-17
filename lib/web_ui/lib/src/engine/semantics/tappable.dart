@@ -7,9 +7,17 @@ import 'package:ui/ui.dart' as ui;
 
 /// Sets the "button" ARIA role.
 class Button extends PrimaryRoleManager {
-  Button(SemanticsObject semanticsObject) : super.withBasics(PrimaryRole.button, semanticsObject) {
+  Button(SemanticsObject semanticsObject) : super.withBasics(
+    PrimaryRole.button,
+    semanticsObject,
+    labelRepresentation: LeafLabelRepresentation.domText,
+  ) {
+    addTappable();
     setAriaRole('button');
   }
+
+  @override
+  bool focusAsRouteDefault() => focusable?.focusAsRouteDefault() ?? false;
 
   @override
   void update() {

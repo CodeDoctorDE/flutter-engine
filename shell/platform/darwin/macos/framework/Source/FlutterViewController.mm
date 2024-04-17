@@ -19,6 +19,8 @@
 #import "flutter/shell/platform/darwin/macos/framework/Source/FlutterView.h"
 #import "flutter/shell/platform/embedder/embedder.h"
 
+#pragma mark - Static types and data.
+
 namespace {
 using flutter::KeyboardLayoutNotifier;
 using flutter::LayoutClue;
@@ -80,20 +82,25 @@ struct MouseState {
    */
   bool has_pending_exit = false;
 
-  /**
-   * Pan gesture is currently sending us events.
+  /*
+   * Whether or not a kPanZoomStart has been sent since the last kAdd/kPanZoomEnd.
    */
-  bool pan_gesture_active = false;
+  bool flutter_state_is_pan_zoom_started = false;
 
   /**
-   * Scale gesture is currently sending us events.
+   * State of pan gesture.
    */
-  bool scale_gesture_active = false;
+  NSEventPhase pan_gesture_phase = NSEventPhaseNone;
 
   /**
-   * Rotate gesture is currently sending use events.
+   * State of scale gesture.
    */
-  bool rotate_gesture_active = false;
+  NSEventPhase scale_gesture_phase = NSEventPhaseNone;
+
+  /**
+   * State of rotate gesture.
+   */
+  NSEventPhase rotate_gesture_phase = NSEventPhaseNone;
 
   /**
    * Time of last scroll momentum event.
@@ -108,6 +115,10 @@ struct MouseState {
     delta_y = 0;
     scale = 0;
     rotation = 0;
+    flutter_state_is_pan_zoom_started = false;
+    pan_gesture_phase = NSEventPhaseNone;
+    scale_gesture_phase = NSEventPhaseNone;
+    rotate_gesture_phase = NSEventPhaseNone;
   }
 
   /**
@@ -121,27 +132,6 @@ struct MouseState {
     GestureReset();
   }
 };
-
-/**
- * Returns the current Unicode layout data (kTISPropertyUnicodeKeyLayoutData).
- *
- * To use the returned data, convert it to CFDataRef first, finds its bytes
- * with CFDataGetBytePtr, then reinterpret it into const UCKeyboardLayout*.
- * It's returned in NSData* to enable auto reference count.
- */
-NSData* currentKeyboardLayoutData() {
-  TISInputSourceRef source = TISCopyCurrentKeyboardInputSource();
-  CFTypeRef layout_data = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData);
-  if (layout_data == nil) {
-    CFRelease(source);
-    // TISGetInputSourceProperty returns null with Japanese keyboard layout.
-    // Using TISCopyCurrentKeyboardLayoutInputSource to fix NULL return.
-    // https://github.com/microsoft/node-native-keymap/blob/5f0699ded00179410a14c0e1b0e089fe4df8e130/src/keyboard_mac.mm#L91
-    source = TISCopyCurrentKeyboardLayoutInputSource();
-    layout_data = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData);
-  }
-  return (__bridge_transfer NSData*)CFRetain(layout_data);
-}
 
 }  // namespace
 
@@ -240,22 +230,21 @@ NSData* currentKeyboardLayoutData() {
 
 @end
 
-#pragma mark - Private dependant functions
+#pragma mark - FlutterViewWrapper implementation.
 
-namespace {
-void OnKeyboardLayoutChanged(CFNotificationCenterRef center,
-                             void* observer,
-                             CFStringRef name,
-                             const void* object,
-                             CFDictionaryRef userInfo) {
+/**
+ * NotificationCenter callback invoked on kTISNotifySelectedKeyboardInputSourceChanged events.
+ */
+static void OnKeyboardLayoutChanged(CFNotificationCenterRef center,
+                                    void* observer,
+                                    CFStringRef name,
+                                    const void* object,
+                                    CFDictionaryRef userInfo) {
   FlutterViewController* controller = (__bridge FlutterViewController*)observer;
   if (controller != nil) {
     [controller onKeyboardLayoutChanged];
   }
 }
-}  // namespace
-
-#pragma mark - FlutterViewWrapper implementation.
 
 @implementation FlutterViewWrapper {
   FlutterView* _flutterView;
@@ -439,6 +428,7 @@ static void CommonInit(FlutterViewController* controller, FlutterEngine* engine)
   [self configureTrackingArea];
   [self.view setAllowedTouchTypes:NSTouchTypeMaskIndirect];
   [self.view setWantsRestingTouches:YES];
+  [_engine viewControllerViewDidLoad:self];
 }
 
 - (void)viewWillAppear {
@@ -679,32 +669,42 @@ static void CommonInit(FlutterViewController* controller, FlutterEngine* engine)
 
   // Multiple gesture recognizers could be active at once, we can't send multiple kPanZoomStart.
   // For example: rotation and magnification.
-  if (phase == kPanZoomStart) {
-    bool gestureAlreadyDown = _mouseState.pan_gesture_active || _mouseState.scale_gesture_active ||
-                              _mouseState.rotate_gesture_active;
+  if (phase == kPanZoomStart || phase == kPanZoomEnd) {
     if (event.type == NSEventTypeScrollWheel) {
-      _mouseState.pan_gesture_active = true;
-      // Ensure scroll inertia cancel event is not sent afterwards.
-      _mouseState.last_scroll_momentum_changed_time = 0;
+      _mouseState.pan_gesture_phase = event.phase;
     } else if (event.type == NSEventTypeMagnify) {
-      _mouseState.scale_gesture_active = true;
+      _mouseState.scale_gesture_phase = event.phase;
     } else if (event.type == NSEventTypeRotate) {
-      _mouseState.rotate_gesture_active = true;
-    }
-    if (gestureAlreadyDown) {
-      return;
+      _mouseState.rotate_gesture_phase = event.phase;
     }
   }
-  if (phase == kPanZoomEnd) {
+  if (phase == kPanZoomStart) {
     if (event.type == NSEventTypeScrollWheel) {
-      _mouseState.pan_gesture_active = false;
-    } else if (event.type == NSEventTypeMagnify) {
-      _mouseState.scale_gesture_active = false;
-    } else if (event.type == NSEventTypeRotate) {
-      _mouseState.rotate_gesture_active = false;
+      // Ensure scroll inertia cancel event is not sent afterwards.
+      _mouseState.last_scroll_momentum_changed_time = 0;
     }
-    if (_mouseState.pan_gesture_active || _mouseState.scale_gesture_active ||
-        _mouseState.rotate_gesture_active) {
+    if (_mouseState.flutter_state_is_pan_zoom_started) {
+      // Already started on a previous gesture type
+      return;
+    }
+    _mouseState.flutter_state_is_pan_zoom_started = true;
+  }
+  if (phase == kPanZoomEnd) {
+    if (!_mouseState.flutter_state_is_pan_zoom_started) {
+      // NSEventPhaseCancelled is sometimes received at incorrect times in the state
+      // machine, just ignore it here if it doesn't make sense
+      // (we have no active gesture to cancel).
+      NSAssert(event.phase == NSEventPhaseCancelled,
+               @"Received gesture event with unexpected phase");
+      return;
+    }
+    // NSEventPhase values are powers of two, we can use this to inspect merged phases.
+    NSEventPhase all_gestures_fields = _mouseState.pan_gesture_phase |
+                                       _mouseState.scale_gesture_phase |
+                                       _mouseState.rotate_gesture_phase;
+    NSEventPhase active_mask = NSEventPhaseBegan | NSEventPhaseChanged;
+    if ((all_gestures_fields & active_mask) != 0) {
+      // Even though this gesture type ended, a different type is still active.
       return;
     }
   }
@@ -743,6 +743,7 @@ static void CommonInit(FlutterViewController* controller, FlutterEngine* engine)
       .device_kind = deviceKind,
       // If a click triggered a synthesized kAdd, don't pass the buttons in that event.
       .buttons = phase == kAdd ? 0 : _mouseState.buttons,
+      .view_id = static_cast<FlutterViewId>(_viewId),
   };
 
   if (phase == kPanZoomUpdate) {
@@ -881,6 +882,27 @@ static void CommonInit(FlutterViewController* controller, FlutterEngine* engine)
 
 #pragma mark - FlutterKeyboardViewDelegate
 
+/**
+ * Returns the current Unicode layout data (kTISPropertyUnicodeKeyLayoutData).
+ *
+ * To use the returned data, convert it to CFDataRef first, finds its bytes
+ * with CFDataGetBytePtr, then reinterpret it into const UCKeyboardLayout*.
+ * It's returned in NSData* to enable auto reference count.
+ */
+static NSData* CurrentKeyboardLayoutData() {
+  TISInputSourceRef source = TISCopyCurrentKeyboardInputSource();
+  CFTypeRef layout_data = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData);
+  if (layout_data == nil) {
+    CFRelease(source);
+    // TISGetInputSourceProperty returns null with Japanese keyboard layout.
+    // Using TISCopyCurrentKeyboardLayoutInputSource to fix NULL return.
+    // https://github.com/microsoft/node-native-keymap/blob/5f0699ded00179410a14c0e1b0e089fe4df8e130/src/keyboard_mac.mm#L91
+    source = TISCopyCurrentKeyboardLayoutInputSource();
+    layout_data = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData);
+  }
+  return (__bridge_transfer NSData*)CFRetain(layout_data);
+}
+
 - (void)sendKeyEvent:(const FlutterKeyEvent&)event
             callback:(nullable FlutterKeyEventCallback)callback
             userData:(nullable void*)userData {
@@ -901,7 +923,7 @@ static void CommonInit(FlutterViewController* controller, FlutterEngine* engine)
 
 - (LayoutClue)lookUpLayoutForKeyCode:(uint16_t)keyCode shift:(BOOL)shift {
   if (_keyboardLayoutData == nil) {
-    _keyboardLayoutData = currentKeyboardLayoutData();
+    _keyboardLayoutData = CurrentKeyboardLayoutData();
   }
   const UCKeyboardLayout* layout = reinterpret_cast<const UCKeyboardLayout*>(
       CFDataGetBytePtr((__bridge CFDataRef)_keyboardLayoutData));
@@ -1049,6 +1071,7 @@ static void CommonInit(FlutterViewController* controller, FlutterEngine* engine)
           .device = kPointerPanZoomDeviceId,
           .signal_kind = kFlutterPointerSignalKindScrollInertiaCancel,
           .device_kind = kFlutterPointerDeviceKindTrackpad,
+          .view_id = static_cast<FlutterViewId>(_viewId),
       };
 
       [_engine sendPointerEvent:flutterEvent];
