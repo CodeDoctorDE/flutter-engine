@@ -398,10 +398,14 @@ class SkwasmTextStyle implements ui.TextStyle {
       skStringFree(localeHandle);
     }
     if (background != null) {
-      textStyleSetBackground(handle, (background! as SkwasmPaint).handle);
+      final backgroundPaint = (background! as SkwasmPaint).toRawPaint();
+      textStyleSetBackground(handle, backgroundPaint);
+      paintDispose(backgroundPaint);
     }
     if (foreground != null) {
-      textStyleSetForeground(handle, (foreground! as SkwasmPaint).handle);
+      final foregroundPaint = (foreground! as SkwasmPaint).toRawPaint();
+      textStyleSetForeground(handle, foregroundPaint);
+      paintDispose(foregroundPaint);
     }
     if (shadows != null) {
       for (final ui.Shadow shadow in shadows!) {
@@ -594,7 +598,7 @@ final class SkwasmStrutStyle extends SkwasmObjectWrapper<RawStrutStyle> implemen
     if (fontSize != null) {
       strutStyleSetFontSize(handle, fontSize);
     }
-    if (height != null) {
+    if (height != null && height != ui.kTextHeightNone) {
       strutStyleSetHeight(handle, height);
     }
     if (leadingDistribution != null) {
@@ -734,7 +738,7 @@ class SkwasmParagraphStyle extends SkwasmObjectWrapper<RawParagraphStyle> implem
     if (maxLines != null) {
       paragraphStyleSetMaxLines(handle, maxLines);
     }
-    if (height != null) {
+    if (height != null && height != ui.kTextHeightNone) {
       paragraphStyleSetHeight(handle, height);
     }
     if (textHeightBehavior != null) {

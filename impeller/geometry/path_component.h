@@ -6,15 +6,106 @@
 #define FLUTTER_IMPELLER_GEOMETRY_PATH_COMPONENT_H_
 
 #include <functional>
+#include <optional>
 #include <type_traits>
-#include <variant>
 #include <vector>
 
 #include "impeller/geometry/point.h"
-#include "impeller/geometry/rect.h"
 #include "impeller/geometry/scalar.h"
 
 namespace impeller {
+
+/// @brief An interface for generating a multi contour polyline as a triangle
+///        strip.
+class VertexWriter {
+ public:
+  virtual void EndContour() = 0;
+
+  virtual void Write(Point point) = 0;
+};
+
+/// @brief A vertex writer that generates a triangle fan and requires primitive
+/// restart.
+class FanVertexWriter : public VertexWriter {
+ public:
+  explicit FanVertexWriter(Point* point_buffer, uint16_t* index_buffer);
+
+  ~FanVertexWriter();
+
+  size_t GetIndexCount() const;
+
+  void EndContour() override;
+
+  void Write(Point point) override;
+
+ private:
+  size_t count_ = 0;
+  size_t index_count_ = 0;
+  Point* point_buffer_ = nullptr;
+  uint16_t* index_buffer_ = nullptr;
+};
+
+/// @brief A vertex writer that generates a triangle strip and requires
+///        primitive restart.
+class StripVertexWriter : public VertexWriter {
+ public:
+  explicit StripVertexWriter(Point* point_buffer, uint16_t* index_buffer);
+
+  ~StripVertexWriter();
+
+  size_t GetIndexCount() const;
+
+  void EndContour() override;
+
+  void Write(Point point) override;
+
+ private:
+  size_t count_ = 0;
+  size_t index_count_ = 0;
+  size_t contour_start_ = 0;
+  Point* point_buffer_ = nullptr;
+  uint16_t* index_buffer_ = nullptr;
+};
+
+/// @brief A vertex writer that generates a line strip topology.
+class LineStripVertexWriter : public VertexWriter {
+ public:
+  explicit LineStripVertexWriter(std::vector<Point>& points);
+
+  ~LineStripVertexWriter() = default;
+
+  void EndContour() override;
+
+  void Write(Point point) override;
+
+  std::pair<size_t, size_t> GetVertexCount() const;
+
+  const std::vector<Point>& GetOversizedBuffer() const;
+
+ private:
+  size_t offset_ = 0u;
+  std::vector<Point>& points_;
+  std::vector<Point> overflow_;
+};
+
+/// @brief A vertex writer that has no hardware requirements.
+class GLESVertexWriter : public VertexWriter {
+ public:
+  explicit GLESVertexWriter(std::vector<Point>& points,
+                            std::vector<uint16_t>& indices);
+
+  ~GLESVertexWriter() = default;
+
+  void EndContour() override;
+
+  void Write(Point point) override;
+
+ private:
+  bool previous_contour_odd_points_ = false;
+  size_t contour_start_ = 0u;
+  std::vector<Point>& points_;
+  std::vector<uint16_t>& indices_;
+};
 
 struct LinearPathComponent {
   Point p1;
@@ -64,6 +155,10 @@ struct QuadraticPathComponent {
 
   void ToLinearPathComponents(Scalar scale_factor, const PointProc& proc) const;
 
+  void ToLinearPathComponents(Scalar scale, VertexWriter& writer) const;
+
+  size_t CountLinearPathComponents(Scalar scale) const;
+
   std::vector<Point> Extrema() const;
 
   bool operator==(const QuadraticPathComponent& other) const {
@@ -109,6 +204,10 @@ struct CubicPathComponent {
 
   void ToLinearPathComponents(Scalar scale, const PointProc& proc) const;
 
+  void ToLinearPathComponents(Scalar scale, VertexWriter& writer) const;
+
+  size_t CountLinearPathComponents(Scalar scale) const;
+
   CubicPathComponent Subsegment(Scalar t0, Scalar t1) const;
 
   bool operator==(const CubicPathComponent& other) const {
@@ -126,38 +225,19 @@ struct CubicPathComponent {
 
 struct ContourComponent {
   Point destination;
-  bool is_closed = false;
+
+  // 0, 0 for closed, anything else for open.
+  Point closed = Point(1, 1);
 
   ContourComponent() {}
 
-  explicit ContourComponent(Point p, bool is_closed = false)
-      : destination(p), is_closed(is_closed) {}
+  constexpr bool IsClosed() const { return closed == Point{0, 0}; }
+
+  explicit ContourComponent(Point p, Point closed)
+      : destination(p), closed(closed) {}
 
   bool operator==(const ContourComponent& other) const {
-    return destination == other.destination && is_closed == other.is_closed;
-  }
-};
-
-using PathComponentVariant = std::variant<std::monostate,
-                                          const LinearPathComponent*,
-                                          const QuadraticPathComponent*,
-                                          const CubicPathComponent*>;
-
-struct PathComponentStartDirectionVisitor {
-  std::optional<Vector2> operator()(const LinearPathComponent* component);
-  std::optional<Vector2> operator()(const QuadraticPathComponent* component);
-  std::optional<Vector2> operator()(const CubicPathComponent* component);
-  std::optional<Vector2> operator()(std::monostate monostate) {
-    return std::nullopt;
-  }
-};
-
-struct PathComponentEndDirectionVisitor {
-  std::optional<Vector2> operator()(const LinearPathComponent* component);
-  std::optional<Vector2> operator()(const QuadraticPathComponent* component);
-  std::optional<Vector2> operator()(const CubicPathComponent* component);
-  std::optional<Vector2> operator()(std::monostate monostate) {
-    return std::nullopt;
+    return destination == other.destination && IsClosed() == other.IsClosed();
   }
 };
 

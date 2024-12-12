@@ -5,7 +5,6 @@
 #include "flutter/runtime/dart_isolate.h"
 
 #include <cstdlib>
-#include <tuple>
 #include <utility>
 
 #include "flutter/fml/logging.h"
@@ -14,17 +13,17 @@
 #include "flutter/lib/io/dart_io.h"
 #include "flutter/lib/ui/dart_runtime_hooks.h"
 #include "flutter/lib/ui/dart_ui.h"
-#include "flutter/lib/ui/window/platform_isolate.h"
 #include "flutter/runtime/dart_isolate_group_data.h"
 #include "flutter/runtime/dart_plugin_registrant.h"
 #include "flutter/runtime/dart_service_isolate.h"
 #include "flutter/runtime/dart_vm.h"
 #include "flutter/runtime/dart_vm_lifecycle.h"
 #include "flutter/runtime/isolate_configuration.h"
-#include "flutter/runtime/runtime_controller.h"
+#include "flutter/runtime/platform_isolate_manager.h"
 #include "fml/message_loop_task_queues.h"
 #include "fml/task_source.h"
 #include "fml/time/time_point.h"
+#include "third_party/dart/runtime/include/bin/native_assets_api.h"
 #include "third_party/dart/runtime/include/dart_api.h"
 #include "third_party/dart/runtime/include/dart_tools_api.h"
 #include "third_party/tonic/converter/dart_converter.h"
@@ -32,7 +31,6 @@
 #include "third_party/tonic/dart_class_provider.h"
 #include "third_party/tonic/dart_message_handler.h"
 #include "third_party/tonic/dart_state.h"
-#include "third_party/tonic/file_loader/file_loader.h"
 #include "third_party/tonic/logging/dart_invoke.h"
 #include "third_party/tonic/scopes/dart_api_scope.h"
 #include "third_party/tonic/scopes/dart_isolate_scope.h"
@@ -99,7 +97,8 @@ std::weak_ptr<DartIsolate> DartIsolate::CreateRunningRootIsolate(
     const std::vector<std::string>& dart_entrypoint_args,
     std::unique_ptr<IsolateConfiguration> isolate_configuration,
     const UIDartState::Context& context,
-    const DartIsolate* spawning_isolate) {
+    const DartIsolate* spawning_isolate,
+    std::shared_ptr<NativeAssetsManager> native_assets_manager) {
   if (!isolate_snapshot) {
     FML_LOG(ERROR) << "Invalid isolate snapshot.";
     return {};
@@ -121,7 +120,8 @@ std::weak_ptr<DartIsolate> DartIsolate::CreateRunningRootIsolate(
                                    isolate_create_callback,            //
                                    isolate_shutdown_callback,          //
                                    context,                            //
-                                   spawning_isolate                    //
+                                   spawning_isolate,                   //
+                                   std::move(native_assets_manager)    //
                                    )
                      .lock();
 
@@ -195,7 +195,8 @@ std::weak_ptr<DartIsolate> DartIsolate::CreateRootIsolate(
     const fml::closure& isolate_create_callback,
     const fml::closure& isolate_shutdown_callback,
     const UIDartState::Context& context,
-    const DartIsolate* spawning_isolate) {
+    const DartIsolate* spawning_isolate,
+    std::shared_ptr<NativeAssetsManager> native_assets_manager) {
   TRACE_EVENT0("flutter", "DartIsolate::CreateRootIsolate");
 
   // Only needed if this is the main isolate for the group.
@@ -246,7 +247,8 @@ std::weak_ptr<DartIsolate> DartIsolate::CreateRootIsolate(
                 context.advisory_script_entrypoint,  // advisory entrypoint
                 nullptr,                             // child isolate preparer
                 isolate_create_callback,             // isolate create callback
-                isolate_shutdown_callback  // isolate shutdown callback
+                isolate_shutdown_callback,        // isolate shutdown callback
+                std::move(native_assets_manager)  //
                 )));
     isolate_maker = [](std::shared_ptr<DartIsolateGroupData>*
                            isolate_group_data,
@@ -632,10 +634,16 @@ bool DartIsolate::UpdateThreadPoolNames() const {
   }
 
   if (auto task_runner = task_runners.GetPlatformTaskRunner()) {
+    bool is_merged_platform_ui_thread =
+        task_runner == task_runners.GetUITaskRunner();
+    std::string label;
+    if (is_merged_platform_ui_thread) {
+      label = task_runners.GetLabel() + std::string{".ui"};
+    } else {
+      label = task_runners.GetLabel() + std::string{".platform"};
+    }
     task_runner->PostTask(
-        [label = task_runners.GetLabel() + std::string{".platform"}]() {
-          Dart_SetThreadName(label.c_str());
-        });
+        [label = std::move(label)]() { Dart_SetThreadName(label.c_str()); });
   }
 
   return true;
@@ -1165,6 +1173,85 @@ bool DartIsolate::DartIsolateInitializeCallback(void** child_callback_data,
   return true;
 }
 
+static void* NativeAssetsDlopenRelative(const char* path, char** error) {
+  auto* isolate_group_data =
+      static_cast<std::shared_ptr<DartIsolateGroupData>*>(
+          Dart_CurrentIsolateGroupData());
+  const std::string& script_uri = (*isolate_group_data)->GetAdvisoryScriptURI();
+  return dart::bin::NativeAssets::DlopenRelative(path, script_uri.data(),
+                                                 error);
+}
+
+static void* NativeAssetsDlopen(const char* asset_id, char** error) {
+  auto* isolate_group_data =
+      static_cast<std::shared_ptr<DartIsolateGroupData>*>(
+          Dart_CurrentIsolateGroupData());
+  auto native_assets_manager = (*isolate_group_data)->GetNativeAssetsManager();
+  if (native_assets_manager == nullptr) {
+    return nullptr;
+  }
+
+  std::vector<std::string> asset_path =
+      native_assets_manager->LookupNativeAsset(asset_id);
+  if (asset_path.size() == 0) {
+    // The asset id was not in the mapping.
+    return nullptr;
+  }
+
+  auto& path_type = asset_path[0];
+  std::string path;
+  static constexpr const char* kAbsolute = "absolute";
+  static constexpr const char* kExecutable = "executable";
+  static constexpr const char* kProcess = "process";
+  static constexpr const char* kRelative = "relative";
+  static constexpr const char* kSystem = "system";
+  if (path_type == kAbsolute || path_type == kRelative ||
+      path_type == kSystem) {
+    path = asset_path[1];
+  }
+
+  if (path_type == kAbsolute) {
+    return dart::bin::NativeAssets::DlopenAbsolute(path.c_str(), error);
+  } else if (path_type == kRelative) {
+    return NativeAssetsDlopenRelative(path.c_str(), error);
+  } else if (path_type == kSystem) {
+    return dart::bin::NativeAssets::DlopenSystem(path.c_str(), error);
+  } else if (path_type == kProcess) {
+    return dart::bin::NativeAssets::DlopenProcess(error);
+  } else if (path_type == kExecutable) {
+    return dart::bin::NativeAssets::DlopenExecutable(error);
+  }
+
+  return nullptr;
+}
+
+static char* NativeAssetsAvailableAssets() {
+  auto* isolate_group_data =
+      static_cast<std::shared_ptr<DartIsolateGroupData>*>(
+          Dart_CurrentIsolateGroupData());
+  auto native_assets_manager = (*isolate_group_data)->GetNativeAssetsManager();
+  FML_DCHECK(native_assets_manager != nullptr);
+  auto available_assets = native_assets_manager->AvailableNativeAssets();
+  auto* result = fml::strdup(available_assets.c_str());
+  return result;
+}
+
+static void InitDartFFIForIsolateGroup() {
+  NativeAssetsApi native_assets;
+  memset(&native_assets, 0, sizeof(native_assets));
+  // TODO(dacoharkes): Remove after flutter_tools stops kernel embedding.
+  native_assets.dlopen_absolute = &dart::bin::NativeAssets::DlopenAbsolute;
+  native_assets.dlopen_relative = &NativeAssetsDlopenRelative;
+  native_assets.dlopen_system = &dart::bin::NativeAssets::DlopenSystem;
+  native_assets.dlopen_executable = &dart::bin::NativeAssets::DlopenExecutable;
+  native_assets.dlopen_process = &dart::bin::NativeAssets::DlopenProcess;
+  // TODO(dacoharkes): End todo.
+  native_assets.dlsym = &dart::bin::NativeAssets::Dlsym;
+  native_assets.dlopen = &NativeAssetsDlopen;
+  native_assets.available_assets = &NativeAssetsAvailableAssets;
+  Dart_InitializeNativeAssetsResolver(&native_assets);
+};
+
 Dart_Isolate DartIsolate::CreateDartIsolateGroup(
     std::unique_ptr<std::shared_ptr<DartIsolateGroupData>> isolate_group_data,
     std::unique_ptr<std::shared_ptr<DartIsolate>> isolate_data,
@@ -1190,6 +1277,8 @@ Dart_Isolate DartIsolate::CreateDartIsolateGroup(
     isolate_group_data.release();
     isolate_data.release();
     // NOLINTEND(clang-analyzer-cplusplus.NewDeleteLeaks)
+
+    InitDartFFIForIsolateGroup();
 
     success = InitializeIsolate(embedder_isolate, isolate, error);
   }

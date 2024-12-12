@@ -9,19 +9,13 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
 
-import 'package:litetest/litetest.dart';
 import 'package:path/path.dart' as path;
+import 'package:test/test.dart';
 
 import 'impeller_enabled.dart';
 import 'shader_test_file_utils.dart';
 
 void main() async {
-  bool assertsEnabled = false;
-  assert(() {
-    assertsEnabled = true;
-    return true;
-  }());
-
   test('impellerc produces reasonable JSON encoded IPLR files', () async {
     final Directory directory = shaderDirectory('iplr-json');
     final Object? rawData = convert.json.decode(
@@ -80,9 +74,6 @@ void main() async {
   });
 
   test('FragmentShader with sampler asserts if sampler is missing when assigned to paint', () async {
-    if (!assertsEnabled) {
-      return;
-    }
     final FragmentProgram program = await FragmentProgram.fromAsset(
       'blue_green_sampler.frag.iplr',
     );
@@ -107,14 +98,9 @@ void main() async {
     final FragmentShader shader = program.fragmentShader()
       ..setImageSampler(0, blueGreenImage);
     shader.dispose();
-    try {
-      final Paint paint = Paint()..shader = shader;  // ignore: unused_local_variable
-      if (assertsEnabled) {
-        fail('Unreachable');
-      }
-    } catch (e) {
-      expect(e.toString(), contains('Attempted to set a disposed shader'));
-    }
+    expect(() {
+      Paint().shader = shader;
+    }, throwsA(isA<AssertionError>().having((AssertionError e) => e.message, 'message', contains('Attempted to set a disposed shader'))));
     blueGreenImage.dispose();
   });
 
@@ -125,21 +111,10 @@ void main() async {
     final FragmentShader shader = program.fragmentShader()
       ..setFloat(0, 0.0);
     shader.dispose();
-    try {
+
+    expect(() {
       shader.setFloat(0, 0.0);
-      if (assertsEnabled) {
-        fail('Unreachable');
-      }
-    } catch (e) {
-      if (assertsEnabled) {
-        expect(
-          e.toString(),
-          contains('Tried to accesss uniforms on a disposed Shader'),
-        );
-      } else {
-        expect(e is RangeError, true);
-      }
-    }
+    }, throwsA(isA<AssertionError>().having((AssertionError e) => e.message, 'message', contains('Tried to accesss uniforms on a disposed Shader'))));
   });
 
   test('Disposed FragmentShader setImageSampler', () async {
@@ -151,22 +126,9 @@ void main() async {
     final FragmentShader shader = program.fragmentShader()
       ..setImageSampler(0, blueGreenImage);
     shader.dispose();
-    try {
+    expect(() {
       shader.setImageSampler(0, blueGreenImage);
-      if (assertsEnabled) {
-        fail('Unreachable');
-      }
-    } on AssertionError catch (e) {
-      expect(
-        e.toString(),
-        contains('Tried to access uniforms on a disposed Shader'),
-      );
-    } on StateError catch (e) {
-      expect(
-        e.toString(),
-        contains('the native peer has been collected'),
-      );
-    }
+    }, throwsA(isA<AssertionError>().having((AssertionError e) => e.message, 'message', contains('Tried to access uniforms on a disposed Shader'))));
     blueGreenImage.dispose();
   });
 
@@ -177,18 +139,9 @@ void main() async {
     final FragmentShader shader = program.fragmentShader()
       ..setFloat(0, 0.0);
     shader.dispose();
-    try {
+    expect(() {
       shader.dispose();
-      if (assertsEnabled) {
-        fail('Unreachable');
-      }
-    } catch (e) {
-      if (assertsEnabled) {
-        expect(e is AssertionError, true);
-      } else {
-        expect(e is StateError, true);
-      }
-    }
+    }, throwsA(isA<AssertionError>().having((AssertionError e) => e.message, 'message', contains('Shader cannot be disposed more than once'))));
   });
 
   test('FragmentShader simple shader renders correctly', () async {
@@ -392,6 +345,68 @@ void main() async {
     shader.dispose();
   });
 
+  test('ImageFilter.shader errors if shader does not have correct uniform layout', () async {
+    if (!impellerEnabled) {
+      print('Skipped for Skia');
+      return;
+    }
+    const List<String> shaders = [
+      'no_uniforms.frag.iplr',
+      'missing_size.frag.iplr',
+      'missing_texture.frag.iplr'
+    ];
+    const List<(bool, bool)> errors = [
+      (true, true),
+      (true, false),
+      (false, false)
+    ];
+    for (int i = 0; i < 3; i++) {
+      final String fileName = shaders[i];
+      final FragmentProgram program = await FragmentProgram.fromAsset(
+        fileName
+      );
+      final FragmentShader shader = program.fragmentShader();
+
+      Object? error;
+      try {
+        ImageFilter.shader(shader);
+      } catch (err) {
+        error = err;
+      }
+      expect(error is StateError, true);
+      final (floatError, samplerError) = errors[i];
+      if (floatError) {
+        expect(error.toString(), contains('shader has fewer than two float'));
+      }
+      if (samplerError) {
+        expect(error.toString(), contains('shader is missing a sampler uniform'));
+      }
+    }
+  });
+
+  test('ImageFilter.shader can be applied to canvas operations', () async {
+    if (!impellerEnabled) {
+      print('Skipped for Skia');
+      return;
+    }
+    final FragmentProgram program = await FragmentProgram.fromAsset(
+      'filter_shader.frag.iplr',
+    );
+    final FragmentShader shader = program.fragmentShader();
+    final PictureRecorder recorder = PictureRecorder();
+    final Canvas canvas = Canvas(recorder);
+    canvas.drawPaint(
+      Paint()
+        ..color = const Color(0xFFFF0000)
+        ..imageFilter = ImageFilter.shader(shader)
+    );
+    final Image image = await recorder.endRecording().toImage(1, 1);
+    final ByteData data = (await image.toByteData())!;
+    final Color color = Color(data.buffer.asUint32List()[0]);
+
+    expect(color, const Color(0xFF00FF00));
+  });
+
   if (impellerEnabled) {
     print('Skipped for Impeller - https://github.com/flutter/flutter/issues/122823');
     return;
@@ -402,7 +417,6 @@ void main() async {
     path.join('supported_glsl_op_shaders', 'iplr'),
     '.iplr',
   );
-  expect(iplrSupportedGLSLOpShaders.isNotEmpty, true);
   _expectFragmentShadersRenderGreen(iplrSupportedGLSLOpShaders);
 
   // Test all supported instructions. See lib/spirv/lib/src/constants.dart
@@ -410,7 +424,6 @@ void main() async {
     path.join('supported_op_shaders', 'iplr'),
     '.iplr',
   );
-  expect(iplrSupportedOpShaders.isNotEmpty, true);
   _expectFragmentShadersRenderGreen(iplrSupportedOpShaders);
 }
 
@@ -418,6 +431,9 @@ void main() async {
 // Keeping the outer loop of the test synchronous allows for easy printing
 // of the file name within the test case.
 void _expectFragmentShadersRenderGreen(Map<String, FragmentProgram> programs) {
+  if (programs.isEmpty) {
+    fail('No shaders found.');
+  }
   for (final String key in programs.keys) {
     test('FragmentProgram $key renders green', () async {
       final FragmentProgram program = programs[key]!;

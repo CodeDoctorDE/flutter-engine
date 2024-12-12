@@ -7,7 +7,6 @@
 
 #include <Metal/Metal.h>
 
-#include "flutter/fml/macros.h"
 #include "impeller/renderer/pipeline_library.h"
 
 namespace impeller {
@@ -34,12 +33,16 @@ class PipelineLibraryMTL final : public PipelineLibrary {
   bool IsValid() const override;
 
   // |PipelineLibrary|
-  PipelineFuture<PipelineDescriptor> GetPipeline(
-      PipelineDescriptor descriptor) override;
+  PipelineFuture<PipelineDescriptor> GetPipeline(PipelineDescriptor descriptor,
+                                                 bool async) override;
 
   // |PipelineLibrary|
   PipelineFuture<ComputePipelineDescriptor> GetPipeline(
-      ComputePipelineDescriptor descriptor) override;
+      ComputePipelineDescriptor descriptor,
+      bool async) override;
+
+  // |PipelineLibrary|
+  bool HasPipeline(const PipelineDescriptor& descriptor) override;
 
   // |PipelineLibrary|
   void RemovePipelinesWithEntryPoint(

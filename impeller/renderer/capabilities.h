@@ -7,7 +7,6 @@
 
 #include <memory>
 
-#include "flutter/fml/macros.h"
 #include "impeller/core/formats.h"
 
 namespace impeller {
@@ -28,11 +27,6 @@ class Capabilities {
   /// @brief  Whether the context backend supports binding Shader Storage Buffer
   ///         Objects (SSBOs) to pipelines.
   virtual bool SupportsSSBO() const = 0;
-
-  /// @brief  Whether the context backend supports blitting from a given
-  ///         `DeviceBuffer` view to a texture region (via the relevant
-  ///         `BlitPass::AddCopy` overloads).
-  virtual bool SupportsBufferToTextureBlits() const = 0;
 
   /// @brief  Whether the context backend supports blitting from one texture
   ///         region to another texture region (via the relevant
@@ -89,6 +83,12 @@ class Capabilities {
   ///         This feature is especially useful for MSAA and stencils.
   virtual bool SupportsDeviceTransientTextures() const = 0;
 
+  /// @brief Whether the primitive type TriangleFan is supported by the backend.
+  virtual bool SupportsTriangleFan() const = 0;
+
+  /// @brief Whether primitive restart is supported.
+  virtual bool SupportsPrimitiveRestart() const = 0;
+
   /// @brief  Returns a supported `PixelFormat` for textures that store
   ///         4-channel colors (red/green/blue/alpha).
   virtual PixelFormat GetDefaultColorFormat() const = 0;
@@ -111,6 +111,11 @@ class Capabilities {
   ///        should not have any impact
   virtual PixelFormat GetDefaultGlyphAtlasFormat() const = 0;
 
+  /// @brief Return the maximum size of a render pass attachment.
+  ///
+  /// Note that this may be smaller than the maximum allocatable texture size.
+  virtual ISize GetMaximumRenderPassAttachmentSize() const = 0;
+
  protected:
   Capabilities();
 
@@ -128,8 +133,6 @@ class CapabilitiesBuilder {
   CapabilitiesBuilder& SetSupportsOffscreenMSAA(bool value);
 
   CapabilitiesBuilder& SetSupportsSSBO(bool value);
-
-  CapabilitiesBuilder& SetSupportsBufferToTextureBlits(bool value);
 
   CapabilitiesBuilder& SetSupportsTextureToTextureBlits(bool value);
 
@@ -153,12 +156,15 @@ class CapabilitiesBuilder {
 
   CapabilitiesBuilder& SetDefaultGlyphAtlasFormat(PixelFormat value);
 
+  CapabilitiesBuilder& SetSupportsTriangleFan(bool value);
+
+  CapabilitiesBuilder& SetMaximumRenderPassAttachmentSize(ISize size);
+
   std::unique_ptr<Capabilities> Build();
 
  private:
   bool supports_offscreen_msaa_ = false;
   bool supports_ssbo_ = false;
-  bool supports_buffer_to_texture_blits_ = false;
   bool supports_texture_to_texture_blits_ = false;
   bool supports_framebuffer_fetch_ = false;
   bool supports_compute_ = false;
@@ -166,10 +172,13 @@ class CapabilitiesBuilder {
   bool supports_read_from_resolve_ = false;
   bool supports_decal_sampler_address_mode_ = false;
   bool supports_device_transient_textures_ = false;
+  bool supports_triangle_fan_ = false;
   std::optional<PixelFormat> default_color_format_ = std::nullopt;
   std::optional<PixelFormat> default_stencil_format_ = std::nullopt;
   std::optional<PixelFormat> default_depth_stencil_format_ = std::nullopt;
   std::optional<PixelFormat> default_glyph_atlas_format_ = std::nullopt;
+  std::optional<ISize> default_maximum_render_pass_attachment_size_ =
+      std::nullopt;
 
   CapabilitiesBuilder(const CapabilitiesBuilder&) = delete;
 

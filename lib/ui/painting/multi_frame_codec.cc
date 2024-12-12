@@ -147,13 +147,11 @@ MultiFrameCodec::State::GetNextFrameImage(
     // This is safe regardless of whether the GPU is available or not because
     // without mipmap creation there is no command buffer encoding done.
     return ImageDecoderImpeller::UploadTextureToStorage(
-        impeller_context, std::make_shared<SkBitmap>(bitmap),
-        std::make_shared<fml::SyncSwitch>(),
-        impeller::StorageMode::kHostVisible,
-        /*create_mips=*/false);
+        impeller_context, std::make_shared<SkBitmap>(bitmap));
   }
 #endif  // IMPELLER_SUPPORTS_RENDERING
 
+#if !SLIMPELLER
   sk_sp<SkImage> skImage;
   gpu_disable_sync_switch->Execute(
       fml::SyncSwitch::Handlers()
@@ -179,6 +177,9 @@ MultiFrameCodec::State::GetNextFrameImage(
 
   return std::make_pair(DlImageGPU::Make({skImage, std::move(unref_queue)}),
                         std::string());
+#else   //  !SLIMPELLER
+  return std::make_pair(nullptr, "Unsupported backend.");
+#endif  //  !SLIMPELLER
 }
 
 void MultiFrameCodec::State::GetNextFrameAndInvokeCallback(
@@ -189,6 +190,17 @@ void MultiFrameCodec::State::GetNextFrameAndInvokeCallback(
     const std::shared_ptr<const fml::SyncSwitch>& gpu_disable_sync_switch,
     size_t trace_id,
     const std::shared_ptr<impeller::Context>& impeller_context) {
+#if FML_OS_IOS_SIMULATOR
+  // Noop backend.
+  if (!resourceContext && !impeller_context) {
+    ui_task_runner->PostTask(
+        fml::MakeCopyable([callback = std::move(callback)]() {
+          // must be destroyed on UI thread.
+        }));
+    return;
+  }
+#endif  // FML_OS_IOS_SIMULATOR
+
   fml::RefPtr<CanvasImage> image = nullptr;
   int duration = 0;
   sk_sp<DlImage> dlImage;

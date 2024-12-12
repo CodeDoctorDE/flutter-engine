@@ -5,16 +5,11 @@
 #ifndef FLUTTER_IMPELLER_ENTITY_CONTENTS_SWEEP_GRADIENT_CONTENTS_H_
 #define FLUTTER_IMPELLER_ENTITY_CONTENTS_SWEEP_GRADIENT_CONTENTS_H_
 
-#include <functional>
-#include <memory>
 #include <vector>
 
-#include "flutter/fml/macros.h"
 #include "impeller/entity/contents/color_source_contents.h"
 #include "impeller/entity/entity.h"
 #include "impeller/geometry/color.h"
-#include "impeller/geometry/gradient.h"
-#include "impeller/geometry/path.h"
 #include "impeller/geometry/point.h"
 #include "impeller/geometry/scalar.h"
 
@@ -27,7 +22,7 @@ class SweepGradientContents final : public ColorSourceContents {
   ~SweepGradientContents() override;
 
   // |Contents|
-  bool IsOpaque() const override;
+  bool IsOpaque(const Matrix& transform) const override;
 
   // |Contents|
   bool Render(const ContentContext& renderer,
@@ -58,6 +53,10 @@ class SweepGradientContents final : public ColorSourceContents {
   bool RenderSSBO(const ContentContext& renderer,
                   const Entity& entity,
                   RenderPass& pass) const;
+
+  bool RenderUniform(const ContentContext& renderer,
+                     const Entity& entity,
+                     RenderPass& pass) const;
 
   Point center_;
   Scalar bias_;

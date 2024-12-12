@@ -5,8 +5,6 @@
 #ifndef FLUTTER_IMPELLER_GOLDEN_TESTS_VULKAN_SCREENSHOTTER_H_
 #define FLUTTER_IMPELLER_GOLDEN_TESTS_VULKAN_SCREENSHOTTER_H_
 
-#include "flutter/fml/macros.h"
-#include "flutter/impeller/aiks/picture.h"
 #include "flutter/impeller/golden_tests/metal_screenshot.h"
 #include "flutter/impeller/golden_tests/screenshotter.h"
 #include "flutter/impeller/playground/playground_impl.h"
@@ -23,9 +21,7 @@ class VulkanScreenshotter : public Screenshotter {
 
   std::unique_ptr<Screenshot> MakeScreenshot(
       AiksContext& aiks_context,
-      const Picture& picture,
-      const ISize& size = {300, 300},
-      bool scale_content = true) override;
+      const std::shared_ptr<Texture> texture) override;
 
   PlaygroundImpl& GetPlayground() override { return *playground_; }
 

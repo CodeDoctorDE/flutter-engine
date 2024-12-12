@@ -5,27 +5,17 @@
 #ifndef FLUTTER_IMPELLER_ENTITY_CONTENTS_SOLID_COLOR_CONTENTS_H_
 #define FLUTTER_IMPELLER_ENTITY_CONTENTS_SOLID_COLOR_CONTENTS_H_
 
-#include <memory>
-
 #include "impeller/entity/contents/color_source_contents.h"
 #include "impeller/entity/contents/contents.h"
 #include "impeller/geometry/color.h"
-#include "impeller/geometry/path.h"
 
 namespace impeller {
-
-class Path;
-class HostBuffer;
-struct VertexBuffer;
 
 class SolidColorContents final : public ColorSourceContents {
  public:
   SolidColorContents();
 
   ~SolidColorContents() override;
-
-  static std::unique_ptr<SolidColorContents> Make(const Path& path,
-                                                  Color color);
 
   void SetColor(Color color);
 
@@ -35,7 +25,7 @@ class SolidColorContents final : public ColorSourceContents {
   bool IsSolidColor() const override;
 
   // |Contents|
-  bool IsOpaque() const override;
+  bool IsOpaque(const Matrix& transform) const override;
 
   // |Contents|
   std::optional<Rect> GetCoverage(const Entity& entity) const override;

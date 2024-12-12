@@ -9,10 +9,10 @@ import 'package:engine_repo_tools/engine_repo_tools.dart';
 import 'package:engine_tool/src/environment.dart';
 import 'package:engine_tool/src/logger.dart';
 import 'package:engine_tool/src/worker_pool.dart';
-import 'package:litetest/litetest.dart';
 import 'package:platform/platform.dart';
 import 'package:process_fakes/process_fakes.dart';
 import 'package:process_runner/process_runner.dart';
+import 'package:test/test.dart';
 
 class TestWorkerPoolProgressReporter implements WorkerPoolProgressReporter {
   int _successCount = 0;
@@ -100,7 +100,7 @@ void main() {
   }
 
   test('worker pool success', () async {
-    final Logger logger = Logger.test();
+    final Logger logger = Logger.test((_) {});
     final (Environment env, _) = macEnv(logger);
     final TestWorkerPoolProgressReporter reporter =
         TestWorkerPoolProgressReporter();
@@ -114,7 +114,7 @@ void main() {
   });
 
   test('worker pool failure', () async {
-    final Logger logger = Logger.test();
+    final Logger logger = Logger.test((_) {});
     final (Environment env, _) = macEnv(logger);
     final TestWorkerPoolProgressReporter reporter =
         TestWorkerPoolProgressReporter();

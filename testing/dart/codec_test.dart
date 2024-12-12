@@ -6,8 +6,8 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:litetest/litetest.dart';
 import 'package:path/path.dart' as path;
+import 'package:test/test.dart';
 
 import 'impeller_enabled.dart';
 
@@ -251,6 +251,46 @@ void main() {
     image = (await codec.getNextFrame()).image;
     imageData = (await image.toByteData())!;
     expect(imageData.getUint32(imageData.lengthInBytes - 4), 0x00000000);
+  });
+
+  test(
+      'Animated apng frame decode does not crash with invalid destination region',
+      () async {
+    final Uint8List data = File(
+      path.join('flutter', 'lib', 'ui', 'fixtures', 'out_of_bounds.apng'),
+    ).readAsBytesSync();
+
+    final ui.Codec codec = await ui.instantiateImageCodec(data);
+    try {
+      await codec.getNextFrame();
+      fail('exception not thrown');
+    } on Exception catch (e) {
+      if (impellerEnabled) {
+        expect(e.toString(), contains('Could not decompress image.'));
+      } else {
+        expect(e.toString(), contains('Codec failed'));
+      }
+    }
+  });
+
+  test(
+      'Animated apng frame decode does not crash with invalid destination region and bounds wrapping',
+      () async {
+    final Uint8List data = File(
+      path.join('flutter', 'lib', 'ui', 'fixtures', 'out_of_bounds_wrapping.apng'),
+    ).readAsBytesSync();
+
+    final ui.Codec codec = await ui.instantiateImageCodec(data);
+    try {
+      await codec.getNextFrame();
+      fail('exception not thrown');
+    } on Exception catch (e) {
+      if (impellerEnabled) {
+        expect(e.toString(), contains('Could not decompress image.'));
+      } else {
+        expect(e.toString(), contains('Codec failed'));
+      }
+    }
   });
 }
 

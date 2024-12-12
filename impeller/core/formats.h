@@ -9,7 +9,6 @@
 #include <functional>
 #include <memory>
 #include <string>
-#include <type_traits>
 
 #include "flutter/fml/hash_combine.h"
 #include "flutter/fml/logging.h"
@@ -351,13 +350,13 @@ enum class IndexType {
 
 /// Decides how backend draws pixels based on input vertices.
 enum class PrimitiveType : uint8_t {
-  /// Draws a triage for each separate set of three vertices.
+  /// Draws a triangle for each separate set of three vertices.
   ///
   /// Vertices [A, B, C, D, E, F] will produce triages
   /// [ABC, DEF].
   kTriangle,
 
-  /// Draws a triage for every adjacent three vertices.
+  /// Draws a triangle for every adjacent three vertices.
   ///
   /// Vertices [A, B, C, D, E, F] will produce triages
   /// [ABC, BCD, CDE, DEF].
@@ -377,8 +376,14 @@ enum class PrimitiveType : uint8_t {
 
   /// Draws a point at each input vertex.
   kPoint,
-  // Triangle fans are implementation dependent and need extra extensions
-  // checks. Hence, they are not supported here.
+
+  /// Draws a triangle for every two vertices, after the first.
+  ///
+  /// The first vertex acts as the hub, all following vertices connect with
+  /// this hub to "fan" out from the first vertex.
+  ///
+  /// Triangle fans are not supported in Metal and need a capability check.
+  kTriangleFan,
 };
 
 enum class PolygonMode {
@@ -404,19 +409,32 @@ struct Viewport {
   }
 };
 
+/// @brief      Describes how the texture should be sampled when the texture
+///             is being shrunk (minified) or expanded (magnified) to fit to
+///             the sample point.
 enum class MinMagFilter {
   /// Select nearest to the sample point. Most widely supported.
   kNearest,
+
   /// Select two points and linearly interpolate between them. Some formats
   /// may not support this.
   kLinear,
 };
 
+/// @brief      Options for selecting and filtering between mipmap levels.
 enum class MipFilter {
-  /// Sample from the nearest mip level.
+  /// @brief    The texture is sampled as if it only had a single mipmap level.
+  ///
+  ///           All samples are read from level 0.
+  kBase,
+
+  /// @brief    The nearst mipmap level is selected.
   kNearest,
-  /// Sample from the two nearest mip levels and linearly interpolate between
-  /// them.
+
+  /// @brief    Sample from the two nearest mip levels and linearly interpolate.
+  ///
+  ///           If the filter falls between levels, both levels are sampled, and
+  ///           their results linearly interpolated between levels.
   kLinear,
 };
 

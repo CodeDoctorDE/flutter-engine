@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "impeller/base/backend_cast.h"
+#include "impeller/core/runtime_types.h"
 #include "impeller/renderer/backend/vulkan/vk.h"
 #include "impeller/renderer/command_queue.h"
 #include "impeller/renderer/context.h"
@@ -67,26 +68,45 @@ class SurfaceContextVK : public Context,
   std::shared_ptr<CommandQueue> GetCommandQueue() const override;
 
   // |Context|
+  std::shared_ptr<const IdleWaiter> GetIdleWaiter() const override;
+
+  // |Context|
+  RuntimeStageBackend GetRuntimeStageBackend() const override;
+
+  // |Context|
   void Shutdown() override;
 
   [[nodiscard]] bool SetWindowSurface(vk::UniqueSurfaceKHR surface,
                                       const ISize& size);
 
+  [[nodiscard]] bool SetSwapchain(std::shared_ptr<SwapchainVK> swapchain);
+
   std::unique_ptr<Surface> AcquireNextSurface();
+
+  /// @brief Performs frame incrementing processes like AcquireNextSurface but
+  ///        without the surface.
+  ///
+  /// Used by the embedder.h implementations.
+  void MarkFrameEnd();
 
   /// @brief Mark the current swapchain configuration as dirty, forcing it to be
   ///        recreated on the next frame.
   void UpdateSurfaceSize(const ISize& size) const;
 
+  // |Context|
   void InitializeCommonlyUsedShadersIfNeeded() const override;
 
-#ifdef FML_OS_ANDROID
-  vk::UniqueSurfaceKHR CreateAndroidSurface(ANativeWindow* window) const;
-#endif  // FML_OS_ANDROID
+  // |Context|
+  void DisposeThreadLocalCachedResources() override;
 
   const vk::Device& GetDevice() const;
 
-  const ContextVK& GetParent() const;
+  const std::shared_ptr<ContextVK>& GetParent() const;
+
+  bool EnqueueCommandBuffer(
+      std::shared_ptr<CommandBuffer> command_buffer) override;
+
+  bool FlushCommandBuffers() override;
 
  private:
   std::shared_ptr<ContextVK> parent_;

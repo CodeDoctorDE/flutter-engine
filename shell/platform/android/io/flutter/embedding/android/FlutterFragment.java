@@ -1009,7 +1009,8 @@ public class FlutterFragment extends Fragment
     return new FlutterActivityAndFragmentDelegate(host);
   }
 
-  private final OnBackPressedCallback onBackPressedCallback =
+  @VisibleForTesting
+  final OnBackPressedCallback onBackPressedCallback =
       new OnBackPressedCallback(true) {
         @Override
         public void handleOnBackPressed() {
@@ -1056,6 +1057,14 @@ public class FlutterFragment extends Fragment
     delegate.onAttach(context);
     if (getArguments().getBoolean(ARG_SHOULD_AUTOMATICALLY_HANDLE_ON_BACK_PRESSED, false)) {
       requireActivity().getOnBackPressedDispatcher().addCallback(this, onBackPressedCallback);
+      // When Android handles a back gesture, it pops an Activity or goes back
+      // to the home screen. When Flutter handles a back gesture, it pops a
+      // route inside of the Flutter part of the app. By default, Android
+      // handles back gestures, so this callback is disabled. If, for example,
+      // the Flutter app has routes for which it wants to handle the back
+      // gesture, then it will enable this callback using
+      // setFrameworkHandlesBack.
+      onBackPressedCallback.setEnabled(false);
     }
     context.registerComponentCallbacks(this);
   }
@@ -1063,6 +1072,12 @@ public class FlutterFragment extends Fragment
   @Override
   public void onCreate(@Nullable Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
+    if (savedInstanceState != null) {
+      boolean frameworkHandlesBack =
+          savedInstanceState.getBoolean(
+              FlutterActivityAndFragmentDelegate.ON_BACK_CALLBACK_ENABLED_KEY);
+      onBackPressedCallback.setEnabled(frameworkHandlesBack);
+    }
     delegate.onRestoreInstanceState(savedInstanceState);
   }
 
@@ -1647,6 +1662,11 @@ public class FlutterFragment extends Fragment
     return true;
   }
 
+  @Override
+  public boolean getBackCallbackState() {
+    return onBackPressedCallback.isEnabled();
+  }
+
   /**
    * {@inheritDoc}
    *
@@ -1663,14 +1683,27 @@ public class FlutterFragment extends Fragment
         // Unless we disable the callback, the dispatcher call will trigger it. This will then
         // trigger the fragment's onBackPressed() implementation, which will call through to the
         // dart side and likely call back through to this method, creating an infinite call loop.
-        onBackPressedCallback.setEnabled(false);
+        boolean enabledAtStart = onBackPressedCallback.isEnabled();
+        if (enabledAtStart) {
+          onBackPressedCallback.setEnabled(false);
+        }
         activity.getOnBackPressedDispatcher().onBackPressed();
-        onBackPressedCallback.setEnabled(true);
+        if (enabledAtStart) {
+          onBackPressedCallback.setEnabled(true);
+        }
         return true;
       }
     }
     // Hook for subclass. No-op if returns false.
     return false;
+  }
+
+  @Override
+  public void setFrameworkHandlesBack(boolean frameworkHandlesBack) {
+    if (!getArguments().getBoolean(ARG_SHOULD_AUTOMATICALLY_HANDLE_ON_BACK_PRESSED, false)) {
+      return;
+    }
+    onBackPressedCallback.setEnabled(frameworkHandlesBack);
   }
 
   @VisibleForTesting

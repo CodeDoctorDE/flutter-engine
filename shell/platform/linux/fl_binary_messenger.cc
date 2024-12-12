@@ -149,18 +149,6 @@ static void platform_message_handler_free(gpointer data) {
   g_free(self);
 }
 
-static void engine_weak_notify_cb(gpointer user_data,
-                                  GObject* where_the_object_was) {
-  FlBinaryMessengerImpl* self = FL_BINARY_MESSENGER_IMPL(user_data);
-
-  // Disconnect any handlers.
-  // Take the reference in case a handler tries to modify this table.
-  g_autoptr(GHashTable) handlers = self->platform_message_handlers;
-  self->platform_message_handlers = g_hash_table_new_full(
-      g_str_hash, g_str_equal, g_free, platform_message_handler_free);
-  g_hash_table_remove_all(handlers);
-}
-
 static gboolean fl_binary_messenger_platform_message_cb(
     FlEngine* engine,
     const gchar* channel,
@@ -186,13 +174,6 @@ static gboolean fl_binary_messenger_platform_message_cb(
 
 static void fl_binary_messenger_impl_dispose(GObject* object) {
   FlBinaryMessengerImpl* self = FL_BINARY_MESSENGER_IMPL(object);
-
-  {
-    g_autoptr(FlEngine) engine = FL_ENGINE(g_weak_ref_get(&self->engine));
-    if (engine) {
-      g_object_weak_unref(G_OBJECT(engine), engine_weak_notify_cb, self);
-    }
-  }
 
   g_weak_ref_clear(&self->engine);
 
@@ -279,8 +260,8 @@ static gboolean send_response(FlBinaryMessenger* messenger,
 static void platform_message_ready_cb(GObject* object,
                                       GAsyncResult* result,
                                       gpointer user_data) {
-  GTask* task = G_TASK(user_data);
-  g_task_return_pointer(task, result, g_object_unref);
+  g_autoptr(GTask) task = G_TASK(user_data);
+  g_task_return_pointer(task, g_object_ref(result), g_object_unref);
 }
 
 static void send_on_channel(FlBinaryMessenger* messenger,
@@ -309,8 +290,12 @@ static GBytes* send_on_channel_finish(FlBinaryMessenger* messenger,
   FlBinaryMessengerImpl* self = FL_BINARY_MESSENGER_IMPL(messenger);
   g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
 
-  g_autoptr(GTask) task = G_TASK(result);
-  GAsyncResult* r = G_ASYNC_RESULT(g_task_propagate_pointer(task, nullptr));
+  GTask* task = G_TASK(result);
+  g_autoptr(GAsyncResult) r =
+      G_ASYNC_RESULT(g_task_propagate_pointer(task, error));
+  if (r == nullptr) {
+    return nullptr;
+  }
 
   g_autoptr(FlEngine) engine = FL_ENGINE(g_weak_ref_get(&self->engine));
   if (engine == nullptr) {
@@ -383,6 +368,17 @@ static void set_warns_on_channel_overflow(FlBinaryMessenger* messenger,
       set_warns_on_channel_overflow_response_cb, nullptr);
 }
 
+static void shutdown(FlBinaryMessenger* messenger) {
+  FlBinaryMessengerImpl* self = FL_BINARY_MESSENGER_IMPL(messenger);
+
+  // Disconnect any handlers.
+  // Take the reference in case a handler tries to modify this table.
+  g_autoptr(GHashTable) handlers = self->platform_message_handlers;
+  self->platform_message_handlers = g_hash_table_new_full(
+      g_str_hash, g_str_equal, g_free, platform_message_handler_free);
+  g_hash_table_remove_all(handlers);
+}
+
 static void fl_binary_messenger_impl_class_init(
     FlBinaryMessengerImplClass* klass) {
   G_OBJECT_CLASS(klass)->dispose = fl_binary_messenger_impl_dispose;
@@ -396,6 +392,7 @@ static void fl_binary_messenger_impl_iface_init(
   iface->send_on_channel_finish = send_on_channel_finish;
   iface->resize_channel = resize_channel;
   iface->set_warns_on_channel_overflow = set_warns_on_channel_overflow;
+  iface->shutdown = shutdown;
 }
 
 static void fl_binary_messenger_impl_init(FlBinaryMessengerImpl* self) {
@@ -413,7 +410,6 @@ FlBinaryMessenger* fl_binary_messenger_new(FlEngine* engine) {
   FL_IS_BINARY_MESSENGER_IMPL(self);
 
   g_weak_ref_init(&self->engine, G_OBJECT(engine));
-  g_object_weak_ref(G_OBJECT(engine), engine_weak_notify_cb, self);
 
   fl_engine_set_platform_message_handler(
       engine, fl_binary_messenger_platform_message_cb, self, NULL);
@@ -489,4 +485,10 @@ G_MODULE_EXPORT void fl_binary_messenger_set_warns_on_channel_overflow(
 
   return FL_BINARY_MESSENGER_GET_IFACE(self)->set_warns_on_channel_overflow(
       self, channel, warns);
+}
+
+void fl_binary_messenger_shutdown(FlBinaryMessenger* self) {
+  g_return_if_fail(FL_IS_BINARY_MESSENGER(self));
+
+  return FL_BINARY_MESSENGER_GET_IFACE(self)->shutdown(self);
 }

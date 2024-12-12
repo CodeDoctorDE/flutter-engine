@@ -8,23 +8,21 @@
 #include <memory>
 #include <vector>
 
+#include "assets/native_assets.h"
 #include "flutter/assets/asset_manager.h"
 #include "flutter/common/task_runners.h"
-#include "flutter/flow/layers/layer_tree.h"
 #include "flutter/fml/macros.h"
 #include "flutter/fml/mapping.h"
 #include "flutter/lib/ui/io_manager.h"
 #include "flutter/lib/ui/painting/image_generator_registry.h"
 #include "flutter/lib/ui/text/font_collection.h"
 #include "flutter/lib/ui/ui_dart_state.h"
-#include "flutter/lib/ui/volatile_path_tracker.h"
 #include "flutter/lib/ui/window/platform_configuration.h"
 #include "flutter/lib/ui/window/pointer_data_packet.h"
+#include "flutter/lib/ui/window/pointer_data_packet_converter.h"
 #include "flutter/runtime/dart_vm.h"
 #include "flutter/runtime/platform_data.h"
 #include "flutter/runtime/platform_isolate_manager.h"
-#include "rapidjson/document.h"
-#include "rapidjson/stringbuffer.h"
 
 namespace flutter {
 
@@ -48,7 +46,8 @@ class Window;
 /// `RuntimeController` and flushed to the Dart VM when the isolate becomes
 /// ready before the entrypoint function. See `PlatformData`.
 ///
-class RuntimeController : public PlatformConfigurationClient {
+class RuntimeController : public PlatformConfigurationClient,
+                          PointerDataPacketConverter::Delegate {
  public:
   /// A callback that's invoked after this `RuntimeController` attempts to
   /// add a view to the Dart isolate.
@@ -166,7 +165,8 @@ class RuntimeController : public PlatformConfigurationClient {
       std::optional<std::string> dart_entrypoint,
       std::optional<std::string> dart_entrypoint_library,
       const std::vector<std::string>& dart_entrypoint_args,
-      std::unique_ptr<IsolateConfiguration> isolate_configuration);
+      std::unique_ptr<IsolateConfiguration> isolate_configuration,
+      std::shared_ptr<NativeAssetsManager> native_assets_manager);
 
   //----------------------------------------------------------------------------
   /// @brief      Clone the runtime controller. Launching an isolate with a
@@ -450,7 +450,7 @@ class RuntimeController : public PlatformConfigurationClient {
   ///
   /// @return     True if root isolate running, False otherwise.
   ///
-  virtual bool IsRootIsolateRunning();
+  virtual bool IsRootIsolateRunning() const;
 
   //----------------------------------------------------------------------------
   /// @brief      Dispatch the specified platform message to running root
@@ -521,6 +521,15 @@ class RuntimeController : public PlatformConfigurationClient {
   ///             False if the root isolate is not running as well.
   ///
   bool HasLivePorts();
+
+  //----------------------------------------------------------------------------
+  /// @brief      Returns if the root isolate has any pending microtasks.
+  ///
+  /// @return     True if there are microtasks that have been queued but not
+  ///             run, False otherwise. Return False if the root isolate is not
+  ///             running as well.
+  ///
+  bool HasPendingMicrotasks();
 
   //----------------------------------------------------------------------------
   /// @brief      Get the last error encountered by the microtask queue.
@@ -687,6 +696,7 @@ class RuntimeController : public PlatformConfigurationClient {
   const fml::closure isolate_shutdown_callback_;
   std::shared_ptr<const fml::Mapping> persistent_isolate_data_;
   UIDartState::Context context_;
+  PointerDataPacketConverter pointer_data_packet_converter_;
   std::shared_ptr<PlatformIsolateManager> platform_isolate_manager_ =
       std::shared_ptr<PlatformIsolateManager>(new PlatformIsolateManager());
   bool has_flushed_runtime_state_ = false;
@@ -720,6 +730,9 @@ class RuntimeController : public PlatformConfigurationClient {
   PlatformConfiguration* GetPlatformConfigurationIfAvailable();
 
   bool FlushRuntimeStateToIsolate();
+
+  // |PointerDataPacketConverter::Delegate|
+  bool ViewExists(int64_t view_id) const override;
 
   // |PlatformConfigurationClient|
   std::string DefaultRouteName() override;

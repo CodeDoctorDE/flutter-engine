@@ -4,8 +4,10 @@
 
 import 'package:engine_build_configs/engine_build_configs.dart';
 
+import '../build_plan.dart';
 import '../build_utils.dart';
-import '../gn_utils.dart';
+import '../gn.dart';
+import '../label.dart';
 import 'command.dart';
 import 'flags.dart';
 
@@ -15,7 +17,7 @@ final class QueryCommand extends CommandBase {
   QueryCommand({
     required super.environment,
     required this.configs,
-    super.verbose = false,
+    super.help = false,
     super.usageLineLength,
   }) {
     // Add options here that are common to all queries.
@@ -44,12 +46,12 @@ final class QueryCommand extends CommandBase {
     addSubcommand(QueryBuildersCommand(
       environment: environment,
       configs: configs,
-      verbose: verbose,
+      help: help,
     ));
     addSubcommand(QueryTargetsCommand(
       environment: environment,
       configs: configs,
-      verbose: verbose,
+      help: help,
     ));
   }
 
@@ -70,7 +72,7 @@ final class QueryBuildersCommand extends CommandBase {
   QueryBuildersCommand({
     required super.environment,
     required this.configs,
-    super.verbose = false,
+    super.help = false,
   });
 
   /// Build configurations loaded from the engine from under ci/builders.
@@ -89,7 +91,7 @@ final class QueryBuildersCommand extends CommandBase {
     // current platform.
     final bool all = parent!.argResults![allFlag]! as bool;
     final String? builderName = parent!.argResults![builderFlag] as String?;
-    if (!verbose) {
+    if (!environment.verbose) {
       environment.logger.status(
         'Add --verbose to see detailed information about each builder',
       );
@@ -111,7 +113,7 @@ final class QueryBuildersCommand extends CommandBase {
           continue;
         }
         environment.logger.status('"${build.name}" config', indent: 3);
-        if (!verbose) {
+        if (!environment.verbose) {
           continue;
         }
         environment.logger.status('gn flags:', indent: 6);
@@ -136,14 +138,13 @@ final class QueryTargetsCommand extends CommandBase {
   QueryTargetsCommand({
     required super.environment,
     required this.configs,
-    super.verbose = false,
+    super.help = false,
   }) {
-    builds = runnableBuilds(environment, configs, verbose);
-    debugCheckBuilds(builds);
-    addConfigOption(
-      environment,
+    builds = BuildPlan.configureArgParser(
       argParser,
-      builds,
+      environment,
+      configs: configs,
+      help: help,
     );
     argParser.addFlag(
       testOnlyFlag,
@@ -171,36 +172,49 @@ et query targets //flutter/fml/...  # List all targets under `//flutter/fml`
 
   @override
   Future<int> run() async {
-    final String configName = argResults![configFlag] as String;
-    final bool testOnly = argResults![testOnlyFlag] as bool;
-    final String demangledName = demangleConfigName(environment, configName);
-    final Build? build =
-        builds.where((Build build) => build.name == demangledName).firstOrNull;
-    if (build == null) {
-      environment.logger.error('Could not find config $configName');
-      return 1;
-    }
-
-    final List<BuildTarget>? selectedTargets = await targetsFromCommandLine(
+    final plan = BuildPlan.fromArgResults(
+      argResults!,
       environment,
-      build,
-      argResults!.rest,
-      defaultToAll: true,
+      builds: builds,
     );
-    if (selectedTargets == null) {
-      // The user typed something wrong and targetsFromCommandLine has already
-      // logged the error message.
+
+    if (!await ensureBuildDir(
+      environment,
+      plan.build,
+      enableRbe: plan.useRbe,
+    )) {
       return 1;
     }
-    if (selectedTargets.isEmpty) {
-      environment.logger.fatal(
-        'targetsFromCommandLine unexpectedly returned an empty list',
-      );
+
+    // Builds only accept labels as arguments, so convert patterns to labels.
+    // TODO(matanlurey): Can be optimized in cases where wildcards are not used.
+    final gn = Gn.fromEnvironment(environment);
+
+    // TODO(matanlurey): Discuss if we want to just require '//...'.
+    // For now this retains the existing behavior.
+    var patterns = argResults!.rest;
+    if (patterns.isEmpty) {
+      patterns = ['//...'];
     }
 
-    for (final BuildTarget target in selectedTargets) {
-      if (testOnly &&
-          (!target.testOnly || target.type != BuildTargetType.executable)) {
+    final allTargets = <BuildTarget>{};
+    for (final pattern in patterns) {
+      final target = TargetPattern.parse(pattern);
+      final targets = await gn.desc(
+        'out/${plan.build.ninja.config}',
+        target,
+      );
+      allTargets.addAll(targets);
+    }
+
+    if (allTargets.isEmpty) {
+      environment.logger.error('No targets found, nothing to query.');
+      return 1;
+    }
+
+    final testOnly = argResults!.flag(testOnlyFlag);
+    for (final target in allTargets) {
+      if (testOnly && (!target.testOnly || target is! ExecutableBuildTarget)) {
         continue;
       }
       environment.logger.status(target.label);

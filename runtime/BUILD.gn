@@ -29,7 +29,7 @@ group("libdart") {
   public_deps = []
 
   if (flutter_runtime_mode == "profile" || flutter_runtime_mode == "release") {
-    public_deps += [ "$dart_src/runtime:libdart_precompiled_runtime" ]
+    public_deps += [ "$dart_src/runtime:libdart_aotruntime" ]
   } else {
     public_deps += [
       "$dart_src/runtime:libdart_jit",
@@ -107,6 +107,7 @@ source_set("runtime") {
     ":test_font",
     "$dart_src/runtime:dart_api",
     "$dart_src/runtime/bin:dart_io_api",
+    "$dart_src/runtime/bin:native_assets_api",
     "//flutter/assets",
     "//flutter/common",
     "//flutter/flow",

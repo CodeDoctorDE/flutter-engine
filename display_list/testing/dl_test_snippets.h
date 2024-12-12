@@ -7,11 +7,13 @@
 
 #include "flutter/display_list/display_list.h"
 #include "flutter/display_list/dl_builder.h"
+#include "flutter/display_list/effects/color_filters/dl_blend_color_filter.h"
+#include "flutter/display_list/effects/dl_color_sources.h"
+#include "flutter/display_list/effects/dl_image_filters.h"
 #include "flutter/testing/testing.h"
 
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkSurface.h"
-#include "third_party/skia/include/effects/SkDashPathEffect.h"
 #include "third_party/skia/include/effects/SkGradientShader.h"
 #include "third_party/skia/include/effects/SkImageFilters.h"
 
@@ -24,7 +26,7 @@ sk_sp<DisplayList> GetSampleNestedDisplayList();
 
 typedef const std::function<void(DlOpReceiver&)> DlInvoker;
 
-constexpr SkPoint kEndPoints[] = {
+constexpr DlPoint kEndPoints[] = {
     {0, 0},
     {100, 100},
 };
@@ -53,9 +55,6 @@ constexpr float kInvertColorMatrix[20] = {
      1.0,  1.0,  1.0, 1.0,   0,
 };
 // clang-format on
-
-const SkScalar kTestDashes1[] = {4.0, 2.0};
-const SkScalar kTestDashes2[] = {1.0, 1.5};
 
 constexpr SkPoint kTestPoints[] = {
     {10, 10},
@@ -92,10 +91,11 @@ static auto TestImage1 = MakeTestImage(40, 40, 5);
 static auto TestImage2 = MakeTestImage(50, 50, 5);
 static auto TestSkImage = MakeTestImage(30, 30, 5)->skia_image();
 
-static const DlImageColorSource kTestSource1(TestImage1,
-                                             DlTileMode::kClamp,
-                                             DlTileMode::kMirror,
-                                             kLinearSampling);
+static const std::shared_ptr<DlColorSource> kTestSource1 =
+    DlColorSource::MakeImage(TestImage1,
+                             DlTileMode::kClamp,
+                             DlTileMode::kMirror,
+                             kLinearSampling);
 static const std::shared_ptr<DlColorSource> kTestSource2 =
     DlColorSource::MakeLinear(kEndPoints[0],
                               kEndPoints[1],
@@ -127,14 +127,18 @@ static const std::shared_ptr<DlColorSource> kTestSource5 =
                              kColors,
                              kStops,
                              DlTileMode::kDecal);
-static const DlBlendColorFilter kTestBlendColorFilter1(DlColor::kRed(),
-                                                       DlBlendMode::kDstATop);
-static const DlBlendColorFilter kTestBlendColorFilter2(DlColor::kBlue(),
-                                                       DlBlendMode::kDstATop);
-static const DlBlendColorFilter kTestBlendColorFilter3(DlColor::kRed(),
-                                                       DlBlendMode::kDstIn);
-static const DlMatrixColorFilter kTestMatrixColorFilter1(kRotateColorMatrix);
-static const DlMatrixColorFilter kTestMatrixColorFilter2(kInvertColorMatrix);
+
+static const auto kTestBlendColorFilter1 =
+    DlColorFilter::MakeBlend(DlColor::kRed(), DlBlendMode::kDstATop);
+static const auto kTestBlendColorFilter2 =
+    DlColorFilter::MakeBlend(DlColor::kBlue(), DlBlendMode::kDstATop);
+static const auto kTestBlendColorFilter3 =
+    DlColorFilter::MakeBlend(DlColor::kRed(), DlBlendMode::kDstOver);
+static const auto kTestMatrixColorFilter1 =
+    DlColorFilter::MakeMatrix(kRotateColorMatrix);
+static const auto kTestMatrixColorFilter2 =
+    DlColorFilter::MakeMatrix(kInvertColorMatrix);
+
 static const DlBlurImageFilter kTestBlurImageFilter1(5.0,
                                                      5.0,
                                                      DlTileMode::kClamp);
@@ -154,13 +158,13 @@ static const DlErodeImageFilter kTestErodeImageFilter1(4.0, 4.0);
 static const DlErodeImageFilter kTestErodeImageFilter2(4.0, 3.0);
 static const DlErodeImageFilter kTestErodeImageFilter3(3.0, 4.0);
 static const DlMatrixImageFilter kTestMatrixImageFilter1(
-    SkMatrix::RotateDeg(45),
+    DlMatrix::MakeRotationZ(DlDegrees(45)),
     kNearestSampling);
 static const DlMatrixImageFilter kTestMatrixImageFilter2(
-    SkMatrix::RotateDeg(85),
+    DlMatrix::MakeRotationZ(DlDegrees(85)),
     kNearestSampling);
 static const DlMatrixImageFilter kTestMatrixImageFilter3(
-    SkMatrix::RotateDeg(45),
+    DlMatrix::MakeRotationZ(DlDegrees(45)),
     kLinearSampling);
 static const DlComposeImageFilter kTestComposeImageFilter1(
     kTestBlurImageFilter1,
@@ -175,38 +179,40 @@ static const DlColorFilterImageFilter kTestCFImageFilter1(
     kTestBlendColorFilter1);
 static const DlColorFilterImageFilter kTestCFImageFilter2(
     kTestBlendColorFilter2);
-static const std::shared_ptr<DlPathEffect> kTestPathEffect1 =
-    DlDashPathEffect::Make(kTestDashes1, 2, 0.0f);
-static const std::shared_ptr<DlPathEffect> kTestPathEffect2 =
-    DlDashPathEffect::Make(kTestDashes2, 2, 0.0f);
 static const DlBlurMaskFilter kTestMaskFilter1(DlBlurStyle::kNormal, 3.0);
 static const DlBlurMaskFilter kTestMaskFilter2(DlBlurStyle::kNormal, 5.0);
 static const DlBlurMaskFilter kTestMaskFilter3(DlBlurStyle::kSolid, 3.0);
 static const DlBlurMaskFilter kTestMaskFilter4(DlBlurStyle::kInner, 3.0);
 static const DlBlurMaskFilter kTestMaskFilter5(DlBlurStyle::kOuter, 3.0);
-constexpr SkRect kTestBounds = SkRect::MakeLTRB(10, 10, 50, 60);
-static const SkRRect kTestRRect = SkRRect::MakeRectXY(kTestBounds, 5, 5);
-static const SkRRect kTestRRectRect = SkRRect::MakeRect(kTestBounds);
-static const SkRRect kTestInnerRRect =
-    SkRRect::MakeRectXY(kTestBounds.makeInset(5, 5), 2, 2);
-static const SkPath kTestPathRect = SkPath::Rect(kTestBounds);
-static const SkPath kTestPathOval = SkPath::Oval(kTestBounds);
-static const SkPath kTestPath1 =
-    SkPath::Polygon({{0, 0}, {10, 10}, {10, 0}, {0, 10}}, true);
-static const SkPath kTestPath2 =
-    SkPath::Polygon({{0, 0}, {10, 10}, {0, 10}, {10, 0}}, true);
-static const SkPath kTestPath3 =
-    SkPath::Polygon({{0, 0}, {10, 10}, {10, 0}, {0, 10}}, false);
+constexpr DlRect kTestBounds = DlRect::MakeLTRB(10, 10, 50, 60);
+constexpr SkRect kTestSkBounds = SkRect::MakeLTRB(10, 10, 50, 60);
+static const DlRoundRect kTestRRect =
+    DlRoundRect::MakeRectXY(kTestBounds, 5, 5);
+static const SkRRect kTestSkRRect = SkRRect::MakeRectXY(kTestSkBounds, 5, 5);
+static const SkRRect kTestRRectRect = SkRRect::MakeRect(kTestSkBounds);
+static const DlRoundRect kTestInnerRRect =
+    DlRoundRect::MakeRectXY(kTestBounds.Expand(-5, -5), 2, 2);
+static const SkRRect kTestSkInnerRRect =
+    SkRRect::MakeRectXY(kTestSkBounds.makeInset(5, 5), 2, 2);
+static const DlPath kTestPathRect = DlPath(SkPath::Rect(kTestSkBounds));
+static const DlPath kTestPathOval = DlPath(SkPath::Oval(kTestSkBounds));
+static const DlPath kTestPathRRect = DlPath(SkPath::RRect(kTestSkRRect));
+static const DlPath kTestPath1 =
+    DlPath(SkPath::Polygon({{0, 0}, {10, 10}, {10, 0}, {0, 10}}, true));
+static const DlPath kTestPath2 =
+    DlPath(SkPath::Polygon({{0, 0}, {10, 10}, {0, 10}, {10, 0}}, true));
+static const DlPath kTestPath3 =
+    DlPath(SkPath::Polygon({{0, 0}, {10, 10}, {10, 0}, {0, 10}}, false));
 static const SkMatrix kTestMatrix1 = SkMatrix::Scale(2, 2);
 static const SkMatrix kTestMatrix2 = SkMatrix::RotateDeg(45);
 
-static std::shared_ptr<const DlVertices> TestVertices1 =
+static const std::shared_ptr<DlVertices> kTestVertices1 =
     DlVertices::Make(DlVertexMode::kTriangles,  //
                      3,
                      kTestPoints,
                      nullptr,
                      kColors);
-static std::shared_ptr<const DlVertices> TestVertices2 =
+static const std::shared_ptr<DlVertices> kTestVertices2 =
     DlVertices::Make(DlVertexMode::kTriangleFan,  //
                      3,
                      kTestPoints,
@@ -228,36 +234,43 @@ SkFont CreateTestFontOfSize(SkScalar scalar);
 sk_sp<SkTextBlob> GetTestTextBlob(int index);
 
 struct DisplayListInvocation {
-  unsigned int op_count_;
+  // ----------------------------------
+  // Required fields for initialization
+  uint32_t op_count_;
   size_t byte_count_;
 
-  // in some cases, running the sequence through an SkCanvas will result
-  // in fewer ops/bytes. Attribute invocations are recorded in an SkPaint
-  // and not forwarded on, and SkCanvas culls unused save/restore/transforms.
-  int sk_op_count_;
-  size_t sk_byte_count_;
+  uint32_t depth_op_count_;
 
-  DlInvoker invoker;
-  bool supports_group_opacity_ = false;
+  DlInvoker invoker_;
+  // ----------------------------------
+
+  // ----------------------------------
+  // Optional fields for initialization
+  uint32_t additional_depth_ = 0u;
+  uint32_t render_op_cost_override_ = 0u;
+  // ----------------------------------
 
   bool is_empty() { return byte_count_ == 0; }
 
-  bool supports_group_opacity() { return supports_group_opacity_; }
-
-  unsigned int op_count() { return op_count_; }
+  uint32_t op_count() { return op_count_; }
   // byte count for the individual ops, no DisplayList overhead
   size_t raw_byte_count() { return byte_count_; }
   // byte count for the ops with DisplayList overhead, comparable
   // to |DisplayList.byte_count().
   size_t byte_count() { return sizeof(DisplayList) + byte_count_; }
 
-  void Invoke(DlOpReceiver& builder) { invoker(builder); }
+  uint32_t depth_accumulated(uint32_t depth_scale = 1u) {
+    return depth_op_count_ * depth_scale + additional_depth_;
+  }
+  uint32_t depth_op_count() { return depth_op_count_; }
+  uint32_t additional_depth() { return additional_depth_; }
+  uint32_t adjust_render_op_depth_cost(uint32_t previous_cost) {
+    return render_op_cost_override_ == 0u  //
+               ? previous_cost
+               : render_op_cost_override_;
+  }
 
-  // sk_sp<DisplayList> Build() {
-  //   DisplayListBuilder builder;
-  //   invoker(builder.asReceiver());
-  //   return builder.Build();
-  // }
+  void Invoke(DlOpReceiver& builder) { invoker_(builder); }
 };
 
 struct DisplayListInvocationGroup {

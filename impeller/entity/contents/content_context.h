@@ -10,43 +10,35 @@
 #include <optional>
 #include <unordered_map>
 
-#include "flutter/fml/build_config.h"
 #include "flutter/fml/logging.h"
 #include "flutter/fml/status_or.h"
 #include "impeller/base/validation.h"
 #include "impeller/core/formats.h"
 #include "impeller/core/host_buffer.h"
-#include "impeller/entity/entity.h"
 #include "impeller/renderer/capabilities.h"
 #include "impeller/renderer/command_buffer.h"
 #include "impeller/renderer/pipeline.h"
 #include "impeller/renderer/pipeline_descriptor.h"
 #include "impeller/renderer/render_target.h"
+#include "impeller/typographer/lazy_glyph_atlas.h"
 #include "impeller/typographer/typographer_context.h"
 
-#ifdef IMPELLER_DEBUG
-#include "impeller/entity/checkerboard.frag.h"
-#include "impeller/entity/checkerboard.vert.h"
-#endif  // IMPELLER_DEBUG
-
-#include "impeller/entity/blend.frag.h"
-#include "impeller/entity/blend.vert.h"
 #include "impeller/entity/border_mask_blur.frag.h"
-#include "impeller/entity/border_mask_blur.vert.h"
 #include "impeller/entity/clip.frag.h"
 #include "impeller/entity/clip.vert.h"
 #include "impeller/entity/color_matrix_color_filter.frag.h"
 #include "impeller/entity/conical_gradient_fill.frag.h"
-#include "impeller/entity/filter.vert.h"
+#include "impeller/entity/fast_gradient.frag.h"
+#include "impeller/entity/fast_gradient.vert.h"
+#include "impeller/entity/filter_position.vert.h"
+#include "impeller/entity/filter_position_uv.vert.h"
+#include "impeller/entity/gaussian.frag.h"
 #include "impeller/entity/glyph_atlas.frag.h"
 #include "impeller/entity/glyph_atlas.vert.h"
-#include "impeller/entity/glyph_atlas_color.frag.h"
 #include "impeller/entity/gradient_fill.vert.h"
 #include "impeller/entity/linear_gradient_fill.frag.h"
 #include "impeller/entity/linear_to_srgb_filter.frag.h"
 #include "impeller/entity/morphology_filter.frag.h"
-#include "impeller/entity/morphology_filter.vert.h"
-#include "impeller/entity/points.comp.h"
 #include "impeller/entity/porter_duff_blend.frag.h"
 #include "impeller/entity/porter_duff_blend.vert.h"
 #include "impeller/entity/radial_gradient_fill.frag.h"
@@ -56,21 +48,18 @@
 #include "impeller/entity/solid_fill.vert.h"
 #include "impeller/entity/srgb_to_linear_filter.frag.h"
 #include "impeller/entity/sweep_gradient_fill.frag.h"
+#include "impeller/entity/texture_downsample.frag.h"
 #include "impeller/entity/texture_fill.frag.h"
 #include "impeller/entity/texture_fill.vert.h"
 #include "impeller/entity/texture_fill_strict_src.frag.h"
+#include "impeller/entity/texture_uv_fill.vert.h"
 #include "impeller/entity/tiled_texture_fill.frag.h"
-#include "impeller/entity/uv.comp.h"
-#include "impeller/entity/vertices.frag.h"
 #include "impeller/entity/yuv_to_rgb_filter.frag.h"
 
-#include "impeller/entity/kernel.vert.h"
-#include "impeller/entity/kernel_decal.frag.h"
-#include "impeller/entity/kernel_nodecal.frag.h"
-
-#include "impeller/entity/position_color.vert.h"
-
-#include "impeller/typographer/glyph_atlas.h"
+#include "impeller/entity/conical_gradient_uniform_fill.frag.h"
+#include "impeller/entity/linear_gradient_uniform_fill.frag.h"
+#include "impeller/entity/radial_gradient_uniform_fill.frag.h"
+#include "impeller/entity/sweep_gradient_uniform_fill.frag.h"
 
 #include "impeller/entity/conical_gradient_ssbo_fill.frag.h"
 #include "impeller/entity/linear_gradient_ssbo_fill.frag.h"
@@ -83,181 +72,195 @@
 #include "impeller/entity/framebuffer_blend.frag.h"
 #include "impeller/entity/framebuffer_blend.vert.h"
 
+#include "impeller/entity/vertices_uber.frag.h"
+
 #ifdef IMPELLER_ENABLE_OPENGLES
-#include "impeller/entity/texture_fill_external.frag.h"
+#include "impeller/entity/texture_downsample_gles.frag.h"
 #include "impeller/entity/tiled_texture_fill_external.frag.h"
 #endif  // IMPELLER_ENABLE_OPENGLES
 
-#if IMPELLER_ENABLE_3D
-#include "impeller/scene/scene_context.h"  // nogncheck
-#endif
-
 namespace impeller {
 
-#ifdef IMPELLER_DEBUG
-using CheckerboardPipeline =
-    RenderPipelineT<CheckerboardVertexShader, CheckerboardFragmentShader>;
-#endif  // IMPELLER_DEBUG
-
+using FastGradientPipeline =
+    RenderPipelineHandle<FastGradientVertexShader, FastGradientFragmentShader>;
 using LinearGradientFillPipeline =
-    RenderPipelineT<GradientFillVertexShader, LinearGradientFillFragmentShader>;
+    RenderPipelineHandle<GradientFillVertexShader,
+                         LinearGradientFillFragmentShader>;
 using SolidFillPipeline =
-    RenderPipelineT<SolidFillVertexShader, SolidFillFragmentShader>;
+    RenderPipelineHandle<SolidFillVertexShader, SolidFillFragmentShader>;
 using RadialGradientFillPipeline =
-    RenderPipelineT<GradientFillVertexShader, RadialGradientFillFragmentShader>;
+    RenderPipelineHandle<GradientFillVertexShader,
+                         RadialGradientFillFragmentShader>;
 using ConicalGradientFillPipeline =
-    RenderPipelineT<GradientFillVertexShader,
-                    ConicalGradientFillFragmentShader>;
+    RenderPipelineHandle<GradientFillVertexShader,
+                         ConicalGradientFillFragmentShader>;
 using SweepGradientFillPipeline =
-    RenderPipelineT<GradientFillVertexShader, SweepGradientFillFragmentShader>;
+    RenderPipelineHandle<GradientFillVertexShader,
+                         SweepGradientFillFragmentShader>;
+using LinearGradientUniformFillPipeline =
+    RenderPipelineHandle<GradientFillVertexShader,
+                         LinearGradientUniformFillFragmentShader>;
+using ConicalGradientUniformFillPipeline =
+    RenderPipelineHandle<GradientFillVertexShader,
+                         ConicalGradientUniformFillFragmentShader>;
+using RadialGradientUniformFillPipeline =
+    RenderPipelineHandle<GradientFillVertexShader,
+                         RadialGradientUniformFillFragmentShader>;
+using SweepGradientUniformFillPipeline =
+    RenderPipelineHandle<GradientFillVertexShader,
+                         SweepGradientUniformFillFragmentShader>;
 using LinearGradientSSBOFillPipeline =
-    RenderPipelineT<GradientFillVertexShader,
-                    LinearGradientSsboFillFragmentShader>;
+    RenderPipelineHandle<GradientFillVertexShader,
+                         LinearGradientSsboFillFragmentShader>;
 using ConicalGradientSSBOFillPipeline =
-    RenderPipelineT<GradientFillVertexShader,
-                    ConicalGradientSsboFillFragmentShader>;
+    RenderPipelineHandle<GradientFillVertexShader,
+                         ConicalGradientSsboFillFragmentShader>;
 using RadialGradientSSBOFillPipeline =
-    RenderPipelineT<GradientFillVertexShader,
-                    RadialGradientSsboFillFragmentShader>;
+    RenderPipelineHandle<GradientFillVertexShader,
+                         RadialGradientSsboFillFragmentShader>;
 using SweepGradientSSBOFillPipeline =
-    RenderPipelineT<GradientFillVertexShader,
-                    SweepGradientSsboFillFragmentShader>;
+    RenderPipelineHandle<GradientFillVertexShader,
+                         SweepGradientSsboFillFragmentShader>;
 using RRectBlurPipeline =
-    RenderPipelineT<RrectBlurVertexShader, RrectBlurFragmentShader>;
-using BlendPipeline = RenderPipelineT<BlendVertexShader, BlendFragmentShader>;
+    RenderPipelineHandle<RrectBlurVertexShader, RrectBlurFragmentShader>;
 using TexturePipeline =
-    RenderPipelineT<TextureFillVertexShader, TextureFillFragmentShader>;
+    RenderPipelineHandle<TextureFillVertexShader, TextureFillFragmentShader>;
+using TextureDownsamplePipeline =
+    RenderPipelineHandle<TextureFillVertexShader,
+                         TextureDownsampleFragmentShader>;
 using TextureStrictSrcPipeline =
-    RenderPipelineT<TextureFillVertexShader,
-                    TextureFillStrictSrcFragmentShader>;
-using PositionUVPipeline =
-    RenderPipelineT<TextureFillVertexShader, TiledTextureFillFragmentShader>;
+    RenderPipelineHandle<TextureFillVertexShader,
+                         TextureFillStrictSrcFragmentShader>;
 using TiledTexturePipeline =
-    RenderPipelineT<TextureFillVertexShader, TiledTextureFillFragmentShader>;
-using KernelDecalPipeline =
-    RenderPipelineT<KernelVertexShader, KernelDecalFragmentShader>;
-using KernelPipeline =
-    RenderPipelineT<KernelVertexShader, KernelNodecalFragmentShader>;
+    RenderPipelineHandle<TextureUvFillVertexShader,
+                         TiledTextureFillFragmentShader>;
+using GaussianBlurPipeline =
+    RenderPipelineHandle<FilterPositionUvVertexShader, GaussianFragmentShader>;
 using BorderMaskBlurPipeline =
-    RenderPipelineT<BorderMaskBlurVertexShader, BorderMaskBlurFragmentShader>;
+    RenderPipelineHandle<FilterPositionUvVertexShader,
+                         BorderMaskBlurFragmentShader>;
 using MorphologyFilterPipeline =
-    RenderPipelineT<MorphologyFilterVertexShader,
-                    MorphologyFilterFragmentShader>;
+    RenderPipelineHandle<FilterPositionUvVertexShader,
+                         MorphologyFilterFragmentShader>;
 using ColorMatrixColorFilterPipeline =
-    RenderPipelineT<FilterVertexShader, ColorMatrixColorFilterFragmentShader>;
+    RenderPipelineHandle<FilterPositionVertexShader,
+                         ColorMatrixColorFilterFragmentShader>;
 using LinearToSrgbFilterPipeline =
-    RenderPipelineT<FilterVertexShader, LinearToSrgbFilterFragmentShader>;
+    RenderPipelineHandle<FilterPositionVertexShader,
+                         LinearToSrgbFilterFragmentShader>;
 using SrgbToLinearFilterPipeline =
-    RenderPipelineT<FilterVertexShader, SrgbToLinearFilterFragmentShader>;
-using GlyphAtlasPipeline =
-    RenderPipelineT<GlyphAtlasVertexShader, GlyphAtlasFragmentShader>;
-using GlyphAtlasColorPipeline =
-    RenderPipelineT<GlyphAtlasVertexShader, GlyphAtlasColorFragmentShader>;
-using PorterDuffBlendPipeline =
-    RenderPipelineT<PorterDuffBlendVertexShader, PorterDuffBlendFragmentShader>;
-using ClipPipeline = RenderPipelineT<ClipVertexShader, ClipFragmentShader>;
-
-using GeometryColorPipeline =
-    RenderPipelineT<PositionColorVertexShader, VerticesFragmentShader>;
+    RenderPipelineHandle<FilterPositionVertexShader,
+                         SrgbToLinearFilterFragmentShader>;
 using YUVToRGBFilterPipeline =
-    RenderPipelineT<FilterVertexShader, YuvToRgbFilterFragmentShader>;
+    RenderPipelineHandle<FilterPositionVertexShader,
+                         YuvToRgbFilterFragmentShader>;
+
+using GlyphAtlasPipeline =
+    RenderPipelineHandle<GlyphAtlasVertexShader, GlyphAtlasFragmentShader>;
+
+using PorterDuffBlendPipeline =
+    RenderPipelineHandle<PorterDuffBlendVertexShader,
+                         PorterDuffBlendFragmentShader>;
+using ClipPipeline = RenderPipelineHandle<ClipVertexShader, ClipFragmentShader>;
 
 // Advanced blends
-using BlendColorPipeline =
-    RenderPipelineT<AdvancedBlendVertexShader, AdvancedBlendFragmentShader>;
+using BlendColorPipeline = RenderPipelineHandle<AdvancedBlendVertexShader,
+                                                AdvancedBlendFragmentShader>;
 using BlendColorBurnPipeline =
-    RenderPipelineT<AdvancedBlendVertexShader, AdvancedBlendFragmentShader>;
+    RenderPipelineHandle<AdvancedBlendVertexShader,
+                         AdvancedBlendFragmentShader>;
 using BlendColorDodgePipeline =
-    RenderPipelineT<AdvancedBlendVertexShader, AdvancedBlendFragmentShader>;
-using BlendDarkenPipeline =
-    RenderPipelineT<AdvancedBlendVertexShader, AdvancedBlendFragmentShader>;
+    RenderPipelineHandle<AdvancedBlendVertexShader,
+                         AdvancedBlendFragmentShader>;
+using BlendDarkenPipeline = RenderPipelineHandle<AdvancedBlendVertexShader,
+                                                 AdvancedBlendFragmentShader>;
 using BlendDifferencePipeline =
-    RenderPipelineT<AdvancedBlendVertexShader, AdvancedBlendFragmentShader>;
+    RenderPipelineHandle<AdvancedBlendVertexShader,
+                         AdvancedBlendFragmentShader>;
 using BlendExclusionPipeline =
-    RenderPipelineT<AdvancedBlendVertexShader, AdvancedBlendFragmentShader>;
+    RenderPipelineHandle<AdvancedBlendVertexShader,
+                         AdvancedBlendFragmentShader>;
 using BlendHardLightPipeline =
-    RenderPipelineT<AdvancedBlendVertexShader, AdvancedBlendFragmentShader>;
-using BlendHuePipeline =
-    RenderPipelineT<AdvancedBlendVertexShader, AdvancedBlendFragmentShader>;
-using BlendLightenPipeline =
-    RenderPipelineT<AdvancedBlendVertexShader, AdvancedBlendFragmentShader>;
+    RenderPipelineHandle<AdvancedBlendVertexShader,
+                         AdvancedBlendFragmentShader>;
+using BlendHuePipeline = RenderPipelineHandle<AdvancedBlendVertexShader,
+                                              AdvancedBlendFragmentShader>;
+using BlendLightenPipeline = RenderPipelineHandle<AdvancedBlendVertexShader,
+                                                  AdvancedBlendFragmentShader>;
 using BlendLuminosityPipeline =
-    RenderPipelineT<AdvancedBlendVertexShader, AdvancedBlendFragmentShader>;
-using BlendMultiplyPipeline =
-    RenderPipelineT<AdvancedBlendVertexShader, AdvancedBlendFragmentShader>;
-using BlendOverlayPipeline =
-    RenderPipelineT<AdvancedBlendVertexShader, AdvancedBlendFragmentShader>;
+    RenderPipelineHandle<AdvancedBlendVertexShader,
+                         AdvancedBlendFragmentShader>;
+using BlendMultiplyPipeline = RenderPipelineHandle<AdvancedBlendVertexShader,
+                                                   AdvancedBlendFragmentShader>;
+using BlendOverlayPipeline = RenderPipelineHandle<AdvancedBlendVertexShader,
+                                                  AdvancedBlendFragmentShader>;
 using BlendSaturationPipeline =
-    RenderPipelineT<AdvancedBlendVertexShader, AdvancedBlendFragmentShader>;
-using BlendScreenPipeline =
-    RenderPipelineT<AdvancedBlendVertexShader, AdvancedBlendFragmentShader>;
+    RenderPipelineHandle<AdvancedBlendVertexShader,
+                         AdvancedBlendFragmentShader>;
+using BlendScreenPipeline = RenderPipelineHandle<AdvancedBlendVertexShader,
+                                                 AdvancedBlendFragmentShader>;
 using BlendSoftLightPipeline =
-    RenderPipelineT<AdvancedBlendVertexShader, AdvancedBlendFragmentShader>;
+    RenderPipelineHandle<AdvancedBlendVertexShader,
+                         AdvancedBlendFragmentShader>;
 // Framebuffer Advanced Blends
 using FramebufferBlendColorPipeline =
-    RenderPipelineT<FramebufferBlendVertexShader,
-                    FramebufferBlendFragmentShader>;
+    RenderPipelineHandle<FramebufferBlendVertexShader,
+                         FramebufferBlendFragmentShader>;
 using FramebufferBlendColorBurnPipeline =
-    RenderPipelineT<FramebufferBlendVertexShader,
-                    FramebufferBlendFragmentShader>;
+    RenderPipelineHandle<FramebufferBlendVertexShader,
+                         FramebufferBlendFragmentShader>;
 using FramebufferBlendColorDodgePipeline =
-    RenderPipelineT<FramebufferBlendVertexShader,
-                    FramebufferBlendFragmentShader>;
+    RenderPipelineHandle<FramebufferBlendVertexShader,
+                         FramebufferBlendFragmentShader>;
 using FramebufferBlendDarkenPipeline =
-    RenderPipelineT<FramebufferBlendVertexShader,
-                    FramebufferBlendFragmentShader>;
+    RenderPipelineHandle<FramebufferBlendVertexShader,
+                         FramebufferBlendFragmentShader>;
 using FramebufferBlendDifferencePipeline =
-    RenderPipelineT<FramebufferBlendVertexShader,
-                    FramebufferBlendFragmentShader>;
+    RenderPipelineHandle<FramebufferBlendVertexShader,
+                         FramebufferBlendFragmentShader>;
 using FramebufferBlendExclusionPipeline =
-    RenderPipelineT<FramebufferBlendVertexShader,
-                    FramebufferBlendFragmentShader>;
+    RenderPipelineHandle<FramebufferBlendVertexShader,
+                         FramebufferBlendFragmentShader>;
 using FramebufferBlendHardLightPipeline =
-    RenderPipelineT<FramebufferBlendVertexShader,
-                    FramebufferBlendFragmentShader>;
+    RenderPipelineHandle<FramebufferBlendVertexShader,
+                         FramebufferBlendFragmentShader>;
 using FramebufferBlendHuePipeline =
-    RenderPipelineT<FramebufferBlendVertexShader,
-                    FramebufferBlendFragmentShader>;
+    RenderPipelineHandle<FramebufferBlendVertexShader,
+                         FramebufferBlendFragmentShader>;
 using FramebufferBlendLightenPipeline =
-    RenderPipelineT<FramebufferBlendVertexShader,
-                    FramebufferBlendFragmentShader>;
+    RenderPipelineHandle<FramebufferBlendVertexShader,
+                         FramebufferBlendFragmentShader>;
 using FramebufferBlendLuminosityPipeline =
-    RenderPipelineT<FramebufferBlendVertexShader,
-                    FramebufferBlendFragmentShader>;
+    RenderPipelineHandle<FramebufferBlendVertexShader,
+                         FramebufferBlendFragmentShader>;
 using FramebufferBlendMultiplyPipeline =
-    RenderPipelineT<FramebufferBlendVertexShader,
-                    FramebufferBlendFragmentShader>;
+    RenderPipelineHandle<FramebufferBlendVertexShader,
+                         FramebufferBlendFragmentShader>;
 using FramebufferBlendOverlayPipeline =
-    RenderPipelineT<FramebufferBlendVertexShader,
-                    FramebufferBlendFragmentShader>;
+    RenderPipelineHandle<FramebufferBlendVertexShader,
+                         FramebufferBlendFragmentShader>;
 using FramebufferBlendSaturationPipeline =
-    RenderPipelineT<FramebufferBlendVertexShader,
-                    FramebufferBlendFragmentShader>;
+    RenderPipelineHandle<FramebufferBlendVertexShader,
+                         FramebufferBlendFragmentShader>;
 using FramebufferBlendScreenPipeline =
-    RenderPipelineT<FramebufferBlendVertexShader,
-                    FramebufferBlendFragmentShader>;
+    RenderPipelineHandle<FramebufferBlendVertexShader,
+                         FramebufferBlendFragmentShader>;
 using FramebufferBlendSoftLightPipeline =
-    RenderPipelineT<FramebufferBlendVertexShader,
-                    FramebufferBlendFragmentShader>;
+    RenderPipelineHandle<FramebufferBlendVertexShader,
+                         FramebufferBlendFragmentShader>;
 
-/// Geometry Pipelines
-using PointsComputeShaderPipeline = ComputePipelineBuilder<PointsComputeShader>;
-using UvComputeShaderPipeline = ComputePipelineBuilder<UvComputeShader>;
+/// Draw Vertices/Atlas Uber Shader
+using VerticesUberShader = RenderPipelineHandle<PorterDuffBlendVertexShader,
+                                                VerticesUberFragmentShader>;
 
 #ifdef IMPELLER_ENABLE_OPENGLES
-using TextureExternalPipeline =
-    RenderPipelineT<TextureFillVertexShader, TextureFillExternalFragmentShader>;
-
 using TiledTextureExternalPipeline =
-    RenderPipelineT<TextureFillVertexShader,
-                    TiledTextureFillExternalFragmentShader>;
+    RenderPipelineHandle<TextureFillVertexShader,
+                         TiledTextureFillExternalFragmentShader>;
+using TextureDownsampleGlesPipeline =
+    RenderPipelineHandle<TextureFillVertexShader,
+                         TextureDownsampleGlesFragmentShader>;
 #endif  // IMPELLER_ENABLE_OPENGLES
-
-// A struct used to isolate command buffer storage from the content
-// context options to preserve const-ness.
-struct PendingCommandBuffers {
-  std::vector<std::shared_ptr<CommandBuffer>> command_buffers;
-};
 
 /// Pipeline state configuration.
 ///
@@ -271,10 +274,11 @@ struct PendingCommandBuffers {
 /// but they shouldn't require e.g. 10s of thousands.
 struct ContentContextOptions {
   enum class StencilMode : uint8_t {
-    /// Turn the stencil test off. Used when drawing without stencil-then-cover.
+    /// Turn the stencil test off. Used when drawing without stencil-then-cover
+    /// or overdraw prevention.
     kIgnore,
 
-    // Operations used for stencil-then-cover
+    // Operations used for stencil-then-cover.
 
     /// Draw the stencil for the NonZero fill path rule.
     ///
@@ -300,24 +304,31 @@ struct ContentContextOptions {
     /// The stencil ref should always be 0 on commands using this mode.
     kCoverCompareInverted,
 
-    // Operations to control the legacy clip implementation, which forms a
-    // heightmap on the stencil buffer.
+    // Operations used for the "overdraw prevention" mechanism. This is used for
+    // drawing strokes.
 
-    /// Slice the clip heightmap to a new maximum height.
-    kLegacyClipRestore,
-    /// Increment the stencil heightmap.
-    kLegacyClipIncrement,
-    /// Decrement the stencil heightmap (used for difference clipping only).
-    kLegacyClipDecrement,
-    /// Used for applying clips to all non-clip draw calls.
-    kLegacyClipCompare,
+    /// For each fragment, increment the stencil value if it's currently zero.
+    /// Discard fragments when the value is non-zero. This prevents
+    /// self-overlapping strokes from drawing over themselves.
+    ///
+    /// Note that this is done for rendering correctness, not performance. If a
+    /// stroke is drawn with a backdrop-reliant blend and self-intersects, then
+    /// the intersected geometry will render incorrectly when overdrawn because
+    /// we don't adjust the geometry prevent self-intersection.
+    ///
+    /// The stencil ref should always be 0 on commands using this mode.
+    kOverdrawPreventionIncrement,
+    /// Reset the stencil to a new maximum value specified by the ref (currently
+    /// always 0).
+    ///
+    /// The stencil ref should always be 0 on commands using this mode.
+    kOverdrawPreventionRestore,
   };
 
   SampleCount sample_count = SampleCount::kCount1;
   BlendMode blend_mode = BlendMode::kSourceOver;
   CompareFunction depth_compare = CompareFunction::kAlways;
-  StencilMode stencil_mode =
-      ContentContextOptions::StencilMode::kLegacyClipCompare;
+  StencilMode stencil_mode = ContentContextOptions::StencilMode::kIgnore;
   PrimitiveType primitive_type = PrimitiveType::kTriangle;
   PixelFormat color_attachment_pixel_format = PixelFormat::kUnknown;
   bool has_depth_stencil_attachments = true;
@@ -325,47 +336,27 @@ struct ContentContextOptions {
   bool wireframe = false;
   bool is_for_rrect_blur_clear = false;
 
-  struct Hash {
-    constexpr uint64_t operator()(const ContentContextOptions& o) const {
-      static_assert(sizeof(o.sample_count) == 1);
-      static_assert(sizeof(o.blend_mode) == 1);
-      static_assert(sizeof(o.sample_count) == 1);
-      static_assert(sizeof(o.depth_compare) == 1);
-      static_assert(sizeof(o.stencil_mode) == 1);
-      static_assert(sizeof(o.primitive_type) == 1);
-      static_assert(sizeof(o.color_attachment_pixel_format) == 1);
+  constexpr uint64_t ToKey() const {
+    static_assert(sizeof(sample_count) == 1);
+    static_assert(sizeof(blend_mode) == 1);
+    static_assert(sizeof(sample_count) == 1);
+    static_assert(sizeof(depth_compare) == 1);
+    static_assert(sizeof(stencil_mode) == 1);
+    static_assert(sizeof(primitive_type) == 1);
+    static_assert(sizeof(color_attachment_pixel_format) == 1);
 
-      return (o.is_for_rrect_blur_clear ? 1llu : 0llu) << 0 |
-             (o.wireframe ? 1llu : 0llu) << 1 |
-             (o.has_depth_stencil_attachments ? 1llu : 0llu) << 2 |
-             (o.depth_write_enabled ? 1llu : 0llu) << 3 |
-             // enums
-             static_cast<uint64_t>(o.color_attachment_pixel_format) << 8 |
-             static_cast<uint64_t>(o.primitive_type) << 16 |
-             static_cast<uint64_t>(o.stencil_mode) << 24 |
-             static_cast<uint64_t>(o.depth_compare) << 32 |
-             static_cast<uint64_t>(o.blend_mode) << 40 |
-             static_cast<uint64_t>(o.sample_count) << 48;
-    }
-  };
-
-  struct Equal {
-    constexpr bool operator()(const ContentContextOptions& lhs,
-                              const ContentContextOptions& rhs) const {
-      return lhs.sample_count == rhs.sample_count &&
-             lhs.blend_mode == rhs.blend_mode &&
-             lhs.depth_write_enabled == rhs.depth_write_enabled &&
-             lhs.depth_compare == rhs.depth_compare &&
-             lhs.stencil_mode == rhs.stencil_mode &&
-             lhs.primitive_type == rhs.primitive_type &&
-             lhs.color_attachment_pixel_format ==
-                 rhs.color_attachment_pixel_format &&
-             lhs.has_depth_stencil_attachments ==
-                 rhs.has_depth_stencil_attachments &&
-             lhs.wireframe == rhs.wireframe &&
-             lhs.is_for_rrect_blur_clear == rhs.is_for_rrect_blur_clear;
-    }
-  };
+    return (is_for_rrect_blur_clear ? 1llu : 0llu) << 0 |
+           (wireframe ? 1llu : 0llu) << 1 |
+           (has_depth_stencil_attachments ? 1llu : 0llu) << 2 |
+           (depth_write_enabled ? 1llu : 0llu) << 3 |
+           // enums
+           static_cast<uint64_t>(color_attachment_pixel_format) << 8 |
+           static_cast<uint64_t>(primitive_type) << 16 |
+           static_cast<uint64_t>(stencil_mode) << 24 |
+           static_cast<uint64_t>(depth_compare) << 32 |
+           static_cast<uint64_t>(blend_mode) << 40 |
+           static_cast<uint64_t>(sample_count) << 48;
+  }
 
   void ApplyToPipelineDescriptor(PipelineDescriptor& desc) const;
 };
@@ -384,97 +375,95 @@ class ContentContext {
 
   bool IsValid() const;
 
-#if IMPELLER_ENABLE_3D
-  std::shared_ptr<scene::SceneContext> GetSceneContext() const;
-#endif  // IMPELLER_ENABLE_3D
+  Tessellator& GetTessellator() const;
 
-  std::shared_ptr<Tessellator> GetTessellator() const;
-
-#ifdef IMPELLER_DEBUG
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetCheckerboardPipeline(
-      ContentContextOptions opts) const {
-    return GetPipeline(checkerboard_pipelines_, opts);
+  PipelineRef GetFastGradientPipeline(ContentContextOptions opts) const {
+    return GetPipeline(fast_gradient_pipelines_, opts);
   }
-#endif  // IMPELLER_DEBUG
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetLinearGradientFillPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetLinearGradientFillPipeline(ContentContextOptions opts) const {
     return GetPipeline(linear_gradient_fill_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetLinearGradientSSBOFillPipeline(ContentContextOptions opts) const {
+  PipelineRef GetLinearGradientUniformFillPipeline(
+      ContentContextOptions opts) const {
+    return GetPipeline(linear_gradient_uniform_fill_pipelines_, opts);
+  }
+
+  PipelineRef GetRadialGradientUniformFillPipeline(
+      ContentContextOptions opts) const {
+    return GetPipeline(radial_gradient_uniform_fill_pipelines_, opts);
+  }
+
+  PipelineRef GetConicalGradientUniformFillPipeline(
+      ContentContextOptions opts) const {
+    return GetPipeline(conical_gradient_uniform_fill_pipelines_, opts);
+  }
+
+  PipelineRef GetSweepGradientUniformFillPipeline(
+      ContentContextOptions opts) const {
+    return GetPipeline(sweep_gradient_uniform_fill_pipelines_, opts);
+  }
+
+  PipelineRef GetLinearGradientSSBOFillPipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsSSBO());
     return GetPipeline(linear_gradient_ssbo_fill_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetRadialGradientSSBOFillPipeline(ContentContextOptions opts) const {
+  PipelineRef GetRadialGradientSSBOFillPipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsSSBO());
     return GetPipeline(radial_gradient_ssbo_fill_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetConicalGradientSSBOFillPipeline(ContentContextOptions opts) const {
+  PipelineRef GetConicalGradientSSBOFillPipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsSSBO());
     return GetPipeline(conical_gradient_ssbo_fill_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetSweepGradientSSBOFillPipeline(ContentContextOptions opts) const {
+  PipelineRef GetSweepGradientSSBOFillPipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsSSBO());
     return GetPipeline(sweep_gradient_ssbo_fill_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetRadialGradientFillPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetRadialGradientFillPipeline(ContentContextOptions opts) const {
     return GetPipeline(radial_gradient_fill_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetConicalGradientFillPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetConicalGradientFillPipeline(ContentContextOptions opts) const {
     return GetPipeline(conical_gradient_fill_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetRRectBlurPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetRRectBlurPipeline(ContentContextOptions opts) const {
     return GetPipeline(rrect_blur_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetSweepGradientFillPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetSweepGradientFillPipeline(ContentContextOptions opts) const {
     return GetPipeline(sweep_gradient_fill_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetSolidFillPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetSolidFillPipeline(ContentContextOptions opts) const {
     return GetPipeline(solid_fill_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBlendPipeline(
-      ContentContextOptions opts) const {
-    return GetPipeline(texture_blend_pipelines_, opts);
-  }
-
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetTexturePipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetTexturePipeline(ContentContextOptions opts) const {
     return GetPipeline(texture_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetTextureStrictSrcPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetTextureStrictSrcPipeline(ContentContextOptions opts) const {
     return GetPipeline(texture_strict_src_pipelines_, opts);
   }
 
 #ifdef IMPELLER_ENABLE_OPENGLES
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetTextureExternalPipeline(
+  PipelineRef GetDownsampleTextureGlesPipeline(
       ContentContextOptions opts) const {
-    FML_DCHECK(GetContext()->GetBackendType() ==
-               Context::BackendType::kOpenGLES);
-    return GetPipeline(texture_external_pipelines_, opts);
+    return GetPipeline(texture_downsample_gles_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetTiledTextureExternalPipeline(
+  PipelineRef GetTiledTextureExternalPipeline(
       ContentContextOptions opts) const {
     FML_DCHECK(GetContext()->GetBackendType() ==
                Context::BackendType::kOpenGLES);
@@ -482,260 +471,214 @@ class ContentContext {
   }
 #endif  // IMPELLER_ENABLE_OPENGLES
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetPositionUVPipeline(
-      ContentContextOptions opts) const {
-    return GetPipeline(position_uv_pipelines_, opts);
-  }
-
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetTiledTexturePipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetTiledTexturePipeline(ContentContextOptions opts) const {
     return GetPipeline(tiled_texture_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetKernelDecalPipeline(
-      ContentContextOptions opts) const {
-    return GetPipeline(kernel_decal_pipelines_, opts);
+  PipelineRef GetGaussianBlurPipeline(ContentContextOptions opts) const {
+    return GetPipeline(gaussian_blur_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetKernelPipeline(
-      ContentContextOptions opts) const {
-    return GetPipeline(kernel_nodecal_pipelines_, opts);
-  }
-
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBorderMaskBlurPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetBorderMaskBlurPipeline(ContentContextOptions opts) const {
     return GetPipeline(border_mask_blur_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetMorphologyFilterPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetMorphologyFilterPipeline(ContentContextOptions opts) const {
     return GetPipeline(morphology_filter_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetColorMatrixColorFilterPipeline(ContentContextOptions opts) const {
+  PipelineRef GetColorMatrixColorFilterPipeline(
+      ContentContextOptions opts) const {
     return GetPipeline(color_matrix_color_filter_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetLinearToSrgbFilterPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetLinearToSrgbFilterPipeline(ContentContextOptions opts) const {
     return GetPipeline(linear_to_srgb_filter_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetSrgbToLinearFilterPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetSrgbToLinearFilterPipeline(ContentContextOptions opts) const {
     return GetPipeline(srgb_to_linear_filter_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetClipPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetClipPipeline(ContentContextOptions opts) const {
     return GetPipeline(clip_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetGlyphAtlasPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetGlyphAtlasPipeline(ContentContextOptions opts) const {
     return GetPipeline(glyph_atlas_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetGlyphAtlasColorPipeline(
-      ContentContextOptions opts) const {
-    return GetPipeline(glyph_atlas_color_pipelines_, opts);
-  }
-
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetGeometryColorPipeline(
-      ContentContextOptions opts) const {
-    return GetPipeline(geometry_color_pipelines_, opts);
-  }
-
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetYUVToRGBFilterPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetYUVToRGBFilterPipeline(ContentContextOptions opts) const {
     return GetPipeline(yuv_to_rgb_filter_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetPorterDuffBlendPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetPorterDuffBlendPipeline(ContentContextOptions opts) const {
     return GetPipeline(porter_duff_blend_pipelines_, opts);
   }
 
   // Advanced blends.
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBlendColorPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetBlendColorPipeline(ContentContextOptions opts) const {
     return GetPipeline(blend_color_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBlendColorBurnPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetBlendColorBurnPipeline(ContentContextOptions opts) const {
     return GetPipeline(blend_colorburn_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBlendColorDodgePipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetBlendColorDodgePipeline(ContentContextOptions opts) const {
     return GetPipeline(blend_colordodge_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBlendDarkenPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetBlendDarkenPipeline(ContentContextOptions opts) const {
     return GetPipeline(blend_darken_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBlendDifferencePipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetBlendDifferencePipeline(ContentContextOptions opts) const {
     return GetPipeline(blend_difference_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBlendExclusionPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetBlendExclusionPipeline(ContentContextOptions opts) const {
     return GetPipeline(blend_exclusion_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBlendHardLightPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetBlendHardLightPipeline(ContentContextOptions opts) const {
     return GetPipeline(blend_hardlight_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBlendHuePipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetBlendHuePipeline(ContentContextOptions opts) const {
     return GetPipeline(blend_hue_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBlendLightenPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetBlendLightenPipeline(ContentContextOptions opts) const {
     return GetPipeline(blend_lighten_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBlendLuminosityPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetBlendLuminosityPipeline(ContentContextOptions opts) const {
     return GetPipeline(blend_luminosity_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBlendMultiplyPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetBlendMultiplyPipeline(ContentContextOptions opts) const {
     return GetPipeline(blend_multiply_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBlendOverlayPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetBlendOverlayPipeline(ContentContextOptions opts) const {
     return GetPipeline(blend_overlay_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBlendSaturationPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetBlendSaturationPipeline(ContentContextOptions opts) const {
     return GetPipeline(blend_saturation_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBlendScreenPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetBlendScreenPipeline(ContentContextOptions opts) const {
     return GetPipeline(blend_screen_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetBlendSoftLightPipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetBlendSoftLightPipeline(ContentContextOptions opts) const {
     return GetPipeline(blend_softlight_pipelines_, opts);
   }
 
+  PipelineRef GetDownsamplePipeline(ContentContextOptions opts) const {
+    return GetPipeline(texture_downsample_pipelines_, opts);
+  }
+
   // Framebuffer Advanced Blends
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetFramebufferBlendColorPipeline(ContentContextOptions opts) const {
+  PipelineRef GetFramebufferBlendColorPipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsFramebufferFetch());
     return GetPipeline(framebuffer_blend_color_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetFramebufferBlendColorBurnPipeline(ContentContextOptions opts) const {
+  PipelineRef GetFramebufferBlendColorBurnPipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsFramebufferFetch());
     return GetPipeline(framebuffer_blend_colorburn_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetFramebufferBlendColorDodgePipeline(ContentContextOptions opts) const {
+  PipelineRef GetFramebufferBlendColorDodgePipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsFramebufferFetch());
     return GetPipeline(framebuffer_blend_colordodge_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetFramebufferBlendDarkenPipeline(ContentContextOptions opts) const {
+  PipelineRef GetFramebufferBlendDarkenPipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsFramebufferFetch());
     return GetPipeline(framebuffer_blend_darken_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetFramebufferBlendDifferencePipeline(ContentContextOptions opts) const {
+  PipelineRef GetFramebufferBlendDifferencePipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsFramebufferFetch());
     return GetPipeline(framebuffer_blend_difference_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetFramebufferBlendExclusionPipeline(ContentContextOptions opts) const {
+  PipelineRef GetFramebufferBlendExclusionPipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsFramebufferFetch());
     return GetPipeline(framebuffer_blend_exclusion_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetFramebufferBlendHardLightPipeline(ContentContextOptions opts) const {
+  PipelineRef GetFramebufferBlendHardLightPipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsFramebufferFetch());
     return GetPipeline(framebuffer_blend_hardlight_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetFramebufferBlendHuePipeline(
-      ContentContextOptions opts) const {
+  PipelineRef GetFramebufferBlendHuePipeline(ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsFramebufferFetch());
     return GetPipeline(framebuffer_blend_hue_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetFramebufferBlendLightenPipeline(ContentContextOptions opts) const {
+  PipelineRef GetFramebufferBlendLightenPipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsFramebufferFetch());
     return GetPipeline(framebuffer_blend_lighten_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetFramebufferBlendLuminosityPipeline(ContentContextOptions opts) const {
+  PipelineRef GetFramebufferBlendLuminosityPipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsFramebufferFetch());
     return GetPipeline(framebuffer_blend_luminosity_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetFramebufferBlendMultiplyPipeline(ContentContextOptions opts) const {
+  PipelineRef GetFramebufferBlendMultiplyPipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsFramebufferFetch());
     return GetPipeline(framebuffer_blend_multiply_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetFramebufferBlendOverlayPipeline(ContentContextOptions opts) const {
+  PipelineRef GetFramebufferBlendOverlayPipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsFramebufferFetch());
     return GetPipeline(framebuffer_blend_overlay_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetFramebufferBlendSaturationPipeline(ContentContextOptions opts) const {
+  PipelineRef GetFramebufferBlendSaturationPipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsFramebufferFetch());
     return GetPipeline(framebuffer_blend_saturation_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetFramebufferBlendScreenPipeline(ContentContextOptions opts) const {
+  PipelineRef GetFramebufferBlendScreenPipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsFramebufferFetch());
     return GetPipeline(framebuffer_blend_screen_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<PipelineDescriptor>>
-  GetFramebufferBlendSoftLightPipeline(ContentContextOptions opts) const {
+  PipelineRef GetFramebufferBlendSoftLightPipeline(
+      ContentContextOptions opts) const {
     FML_DCHECK(GetDeviceCapabilities().SupportsFramebufferFetch());
     return GetPipeline(framebuffer_blend_softlight_pipelines_, opts);
   }
 
-  std::shared_ptr<Pipeline<ComputePipelineDescriptor>> GetPointComputePipeline()
-      const {
-    FML_DCHECK(GetDeviceCapabilities().SupportsCompute());
-    return point_field_compute_pipelines_;
+  PipelineRef GetDrawVerticesUberShader(ContentContextOptions opts) const {
+    return GetPipeline(vertices_uber_shader_, opts);
   }
 
-  std::shared_ptr<Pipeline<ComputePipelineDescriptor>> GetUvComputePipeline()
-      const {
-    FML_DCHECK(GetDeviceCapabilities().SupportsCompute());
-    return uv_compute_pipelines_;
-  }
+  // An empty 1x1 texture for binding drawVertices/drawAtlas or other cases
+  // that don't always have a texture (due to blending).
+  std::shared_ptr<Texture> GetEmptyTexture() const;
 
   std::shared_ptr<Context> GetContext() const;
 
@@ -781,7 +724,7 @@ class ContentContext {
   ///
   /// The create_callback is synchronously invoked exactly once if a cached
   /// pipeline is not found.
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetCachedRuntimeEffectPipeline(
+  PipelineRef GetCachedRuntimeEffectPipeline(
       const std::string& unique_entrypoint_name,
       const ContentContextOptions& options,
       const std::function<std::shared_ptr<Pipeline<PipelineDescriptor>>()>&
@@ -817,7 +760,7 @@ class ContentContext {
     struct Hash {
       std::size_t operator()(const RuntimeEffectPipelineKey& key) const {
         return fml::HashCombine(key.unique_entrypoint_name,
-                                ContentContextOptions::Hash{}(key.options));
+                                key.options.ToKey());
       }
     };
 
@@ -825,7 +768,7 @@ class ContentContext {
       constexpr bool operator()(const RuntimeEffectPipelineKey& lhs,
                                 const RuntimeEffectPipelineKey& rhs) const {
         return lhs.unique_entrypoint_name == rhs.unique_entrypoint_name &&
-               ContentContextOptions::Equal{}(lhs.options, rhs.options);
+               lhs.options.ToKey() == rhs.options.ToKey();
       }
     };
   };
@@ -836,18 +779,37 @@ class ContentContext {
                              RuntimeEffectPipelineKey::Equal>
       runtime_effect_pipelines_;
 
-  template <class PipelineT>
+  /// Holds multiple Pipelines associated with the same PipelineHandle types.
+  ///
+  /// For example, it may have multiple
+  /// RenderPipelineHandle<SolidFillVertexShader, SolidFillFragmentShader>
+  /// instances for different blend modes. From them you can access the
+  /// Pipeline.
+  ///
+  /// See also:
+  ///  - impeller::ContentContextOptions - options from which variants are
+  ///    created.
+  ///  - impeller::Pipeline::CreateVariant
+  ///  - impeller::RenderPipelineHandle<> - The type of objects this typically
+  ///    contains.
+  template <class PipelineHandleT>
   class Variants {
    public:
     Variants() = default;
 
     void Set(const ContentContextOptions& options,
-             std::unique_ptr<PipelineT> pipeline) {
-      pipelines_[options] = std::move(pipeline);
+             std::unique_ptr<PipelineHandleT> pipeline) {
+      uint64_t p_key = options.ToKey();
+      for (const auto& [key, pipeline] : pipelines_) {
+        if (key == p_key) {
+          return;
+        }
+      }
+      pipelines_.push_back(std::make_pair(p_key, std::move(pipeline)));
     }
 
     void SetDefault(const ContentContextOptions& options,
-                    std::unique_ptr<PipelineT> pipeline) {
+                    std::unique_ptr<PipelineHandleT> pipeline) {
       default_options_ = options;
       Set(options, std::move(pipeline));
     }
@@ -855,24 +817,27 @@ class ContentContext {
     void CreateDefault(const Context& context,
                        const ContentContextOptions& options,
                        const std::initializer_list<Scalar>& constants = {}) {
-      auto desc =
-          PipelineT::Builder::MakeDefaultPipelineDescriptor(context, constants);
+      auto desc = PipelineHandleT::Builder::MakeDefaultPipelineDescriptor(
+          context, constants);
       if (!desc.has_value()) {
         VALIDATION_LOG << "Failed to create default pipeline.";
         return;
       }
       options.ApplyToPipelineDescriptor(*desc);
-      SetDefault(options, std::make_unique<PipelineT>(context, desc));
+      SetDefault(options, std::make_unique<PipelineHandleT>(context, desc));
     }
 
-    PipelineT* Get(const ContentContextOptions& options) const {
-      if (auto found = pipelines_.find(options); found != pipelines_.end()) {
-        return found->second.get();
+    PipelineHandleT* Get(const ContentContextOptions& options) const {
+      uint64_t p_key = options.ToKey();
+      for (const auto& [key, pipeline] : pipelines_) {
+        if (key == p_key) {
+          return pipeline.get();
+        }
       }
       return nullptr;
     }
 
-    PipelineT* GetDefault() const {
+    PipelineHandleT* GetDefault() const {
       if (!default_options_.has_value()) {
         return nullptr;
       }
@@ -883,10 +848,7 @@ class ContentContext {
 
    private:
     std::optional<ContentContextOptions> default_options_;
-    std::unordered_map<ContentContextOptions,
-                       std::unique_ptr<PipelineT>,
-                       ContentContextOptions::Hash,
-                       ContentContextOptions::Equal>
+    std::vector<std::pair<uint64_t, std::unique_ptr<PipelineHandleT>>>
         pipelines_;
 
     Variants(const Variants&) = delete;
@@ -898,16 +860,21 @@ class ContentContext {
   // variants requested from that are lazily created and cached in the variants
   // map.
 
-#ifdef IMPELLER_DEBUG
-  mutable Variants<CheckerboardPipeline> checkerboard_pipelines_;
-#endif  // IMPELLER_DEBUG
-
   mutable Variants<SolidFillPipeline> solid_fill_pipelines_;
+  mutable Variants<FastGradientPipeline> fast_gradient_pipelines_;
   mutable Variants<LinearGradientFillPipeline> linear_gradient_fill_pipelines_;
   mutable Variants<RadialGradientFillPipeline> radial_gradient_fill_pipelines_;
   mutable Variants<ConicalGradientFillPipeline>
       conical_gradient_fill_pipelines_;
   mutable Variants<SweepGradientFillPipeline> sweep_gradient_fill_pipelines_;
+  mutable Variants<LinearGradientUniformFillPipeline>
+      linear_gradient_uniform_fill_pipelines_;
+  mutable Variants<RadialGradientUniformFillPipeline>
+      radial_gradient_uniform_fill_pipelines_;
+  mutable Variants<ConicalGradientUniformFillPipeline>
+      conical_gradient_uniform_fill_pipelines_;
+  mutable Variants<SweepGradientUniformFillPipeline>
+      sweep_gradient_uniform_fill_pipelines_;
   mutable Variants<LinearGradientSSBOFillPipeline>
       linear_gradient_ssbo_fill_pipelines_;
   mutable Variants<RadialGradientSSBOFillPipeline>
@@ -917,18 +884,17 @@ class ContentContext {
   mutable Variants<SweepGradientSSBOFillPipeline>
       sweep_gradient_ssbo_fill_pipelines_;
   mutable Variants<RRectBlurPipeline> rrect_blur_pipelines_;
-  mutable Variants<BlendPipeline> texture_blend_pipelines_;
   mutable Variants<TexturePipeline> texture_pipelines_;
+  mutable Variants<TextureDownsamplePipeline> texture_downsample_pipelines_;
   mutable Variants<TextureStrictSrcPipeline> texture_strict_src_pipelines_;
 #ifdef IMPELLER_ENABLE_OPENGLES
-  mutable Variants<TextureExternalPipeline> texture_external_pipelines_;
   mutable Variants<TiledTextureExternalPipeline>
       tiled_texture_external_pipelines_;
+  mutable Variants<TextureDownsampleGlesPipeline>
+      texture_downsample_gles_pipelines_;
 #endif  // IMPELLER_ENABLE_OPENGLES
-  mutable Variants<PositionUVPipeline> position_uv_pipelines_;
   mutable Variants<TiledTexturePipeline> tiled_texture_pipelines_;
-  mutable Variants<KernelDecalPipeline> kernel_decal_pipelines_;
-  mutable Variants<KernelPipeline> kernel_nodecal_pipelines_;
+  mutable Variants<GaussianBlurPipeline> gaussian_blur_pipelines_;
   mutable Variants<BorderMaskBlurPipeline> border_mask_blur_pipelines_;
   mutable Variants<MorphologyFilterPipeline> morphology_filter_pipelines_;
   mutable Variants<ColorMatrixColorFilterPipeline>
@@ -937,8 +903,6 @@ class ContentContext {
   mutable Variants<SrgbToLinearFilterPipeline> srgb_to_linear_filter_pipelines_;
   mutable Variants<ClipPipeline> clip_pipelines_;
   mutable Variants<GlyphAtlasPipeline> glyph_atlas_pipelines_;
-  mutable Variants<GlyphAtlasColorPipeline> glyph_atlas_color_pipelines_;
-  mutable Variants<GeometryColorPipeline> geometry_color_pipelines_;
   mutable Variants<YUVToRGBFilterPipeline> yuv_to_rgb_filter_pipelines_;
   mutable Variants<PorterDuffBlendPipeline> porter_duff_blend_pipelines_;
   // Advanced blends.
@@ -988,25 +952,22 @@ class ContentContext {
       framebuffer_blend_screen_pipelines_;
   mutable Variants<FramebufferBlendSoftLightPipeline>
       framebuffer_blend_softlight_pipelines_;
-  mutable std::shared_ptr<Pipeline<ComputePipelineDescriptor>>
-      point_field_compute_pipelines_;
-  mutable std::shared_ptr<Pipeline<ComputePipelineDescriptor>>
-      uv_compute_pipelines_;
+  mutable Variants<VerticesUberShader> vertices_uber_shader_;
 
   template <class TypedPipeline>
-  std::shared_ptr<Pipeline<PipelineDescriptor>> GetPipeline(
-      Variants<TypedPipeline>& container,
-      ContentContextOptions opts) const {
+  PipelineRef GetPipeline(Variants<TypedPipeline>& container,
+                          ContentContextOptions opts) const {
     TypedPipeline* pipeline = CreateIfNeeded(container, opts);
     if (!pipeline) {
-      return nullptr;
+      return raw_ptr<Pipeline<PipelineDescriptor>>();
     }
-    return pipeline->WaitAndGet();
+    return raw_ptr(pipeline->WaitAndGet());
   }
 
-  template <class TypedPipeline>
-  TypedPipeline* CreateIfNeeded(Variants<TypedPipeline>& container,
-                                ContentContextOptions opts) const {
+  template <class RenderPipelineHandleT>
+  RenderPipelineHandleT* CreateIfNeeded(
+      Variants<RenderPipelineHandleT>& container,
+      ContentContextOptions opts) const {
     if (!IsValid()) {
       return nullptr;
     }
@@ -1015,42 +976,39 @@ class ContentContext {
       opts.wireframe = true;
     }
 
-    if (TypedPipeline* found = container.Get(opts)) {
+    if (RenderPipelineHandleT* found = container.Get(opts)) {
       return found;
     }
 
-    TypedPipeline* prototype = container.GetDefault();
+    RenderPipelineHandleT* default_handle = container.GetDefault();
 
-    // The prototype must always be initialized in the constructor.
-    FML_CHECK(prototype != nullptr);
+    // The default must always be initialized in the constructor.
+    FML_CHECK(default_handle != nullptr);
 
-    std::shared_ptr<Pipeline<PipelineDescriptor>> pipeline =
-        prototype->WaitAndGet();
+    const std::shared_ptr<Pipeline<PipelineDescriptor>>& pipeline =
+        default_handle->WaitAndGet();
     if (!pipeline) {
       return nullptr;
     }
 
     auto variant_future = pipeline->CreateVariant(
-        [&opts, variants_count =
-                    container.GetPipelineCount()](PipelineDescriptor& desc) {
+        /*async=*/false, [&opts, variants_count = container.GetPipelineCount()](
+                             PipelineDescriptor& desc) {
           opts.ApplyToPipelineDescriptor(desc);
           desc.SetLabel(
-              SPrintF("%s V#%zu", desc.GetLabel().c_str(), variants_count));
+              SPrintF("%s V#%zu", desc.GetLabel().data(), variants_count));
         });
-    std::unique_ptr<TypedPipeline> variant =
-        std::make_unique<TypedPipeline>(std::move(variant_future));
+    std::unique_ptr<RenderPipelineHandleT> variant =
+        std::make_unique<RenderPipelineHandleT>(std::move(variant_future));
     container.Set(opts, std::move(variant));
     return container.Get(opts);
   }
 
   bool is_valid_ = false;
   std::shared_ptr<Tessellator> tessellator_;
-#if IMPELLER_ENABLE_3D
-  std::shared_ptr<scene::SceneContext> scene_context_;
-#endif  // IMPELLER_ENABLE_3D
   std::shared_ptr<RenderTargetAllocator> render_target_cache_;
   std::shared_ptr<HostBuffer> host_buffer_;
-  std::unique_ptr<PendingCommandBuffers> pending_command_buffers_;
+  std::shared_ptr<Texture> empty_texture_;
   bool wireframe_ = false;
 
   ContentContext(const ContentContext&) = delete;

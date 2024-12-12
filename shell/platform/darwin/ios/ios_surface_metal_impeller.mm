@@ -7,16 +7,22 @@
 #include "flutter/impeller/renderer/backend/metal/formats_mtl.h"
 #include "flutter/impeller/renderer/context.h"
 #include "flutter/shell/gpu/gpu_surface_metal_impeller.h"
+#include "impeller/display_list/aiks_context.h"
+#include "impeller/typographer/backends/skia/typographer_context_skia.h"
+#include "impeller/typographer/typographer_context.h"
+
+FLUTTER_ASSERT_ARC
 
 namespace flutter {
 
-IOSSurfaceMetalImpeller::IOSSurfaceMetalImpeller(const fml::scoped_nsobject<CAMetalLayer>& layer,
+IOSSurfaceMetalImpeller::IOSSurfaceMetalImpeller(CAMetalLayer* layer,
                                                  const std::shared_ptr<IOSContext>& context)
     : IOSSurface(context),
       GPUSurfaceMetalDelegate(MTLRenderTargetType::kCAMetalLayer),
       layer_(layer),
-      impeller_context_(context ? context->GetImpellerContext() : nullptr) {
-  if (!impeller_context_) {
+      impeller_context_(context ? context->GetImpellerContext() : nullptr),
+      aiks_context_(context ? context->GetAiksContext() : nullptr) {
+  if (!impeller_context_ || !aiks_context_) {
     return;
   }
   is_valid_ = true;
@@ -38,33 +44,24 @@ void IOSSurfaceMetalImpeller::UpdateStorageSizeIfNecessary() {
 // |IOSSurface|
 std::unique_ptr<Surface> IOSSurfaceMetalImpeller::CreateGPUSurface(GrDirectContext*) {
   impeller_context_->UpdateOffscreenLayerPixelFormat(
-      impeller::FromMTLPixelFormat(layer_.get().pixelFormat));
-  return std::make_unique<GPUSurfaceMetalImpeller>(this,              //
-                                                   impeller_context_  //
+      impeller::FromMTLPixelFormat(layer_.pixelFormat));
+  return std::make_unique<GPUSurfaceMetalImpeller>(this,          //
+                                                   aiks_context_  //
   );
 }
 
 // |GPUSurfaceMetalDelegate|
 GPUCAMetalLayerHandle IOSSurfaceMetalImpeller::GetCAMetalLayer(const SkISize& frame_info) const {
-  CAMetalLayer* layer = layer_.get();
   const auto drawable_size = CGSizeMake(frame_info.width(), frame_info.height());
-  if (!CGSizeEqualToSize(drawable_size, layer.drawableSize)) {
-    layer.drawableSize = drawable_size;
+  if (!CGSizeEqualToSize(drawable_size, layer_.drawableSize)) {
+    layer_.drawableSize = drawable_size;
   }
 
   // Flutter needs to read from the color attachment in cases where there are effects such as
   // backdrop filters. Flutter plugins that create platform views may also read from the layer.
-  layer.framebufferOnly = NO;
+  layer_.framebufferOnly = NO;
 
-  // When there are platform views in the scene, the drawable needs to be presented in the same
-  // transaction as the one created for platform views. When the drawable are being presented from
-  // the raster thread, we may not be able to use a transaction as it will dirty the UIViews being
-  // presented. If there is a non-Flutter UIView active, such as in add2app or a
-  // presentViewController page transition, then this will cause CoreAnimation assertion errors and
-  // exit the app.
-  layer.presentsWithTransaction = [[NSThread currentThread] isMainThread];
-
-  return layer;
+  return (__bridge GPUCAMetalLayerHandle)layer_;
 }
 
 // |GPUSurfaceMetalDelegate|

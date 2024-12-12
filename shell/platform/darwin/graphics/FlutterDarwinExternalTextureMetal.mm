@@ -3,17 +3,20 @@
 // found in the LICENSE file.
 
 #import "flutter/shell/platform/darwin/graphics/FlutterDarwinExternalTextureMetal.h"
+
 #include "flutter/display_list/image/dl_image.h"
+#include "flutter/fml/platform/darwin/cf_utils.h"
 #include "impeller/base/validation.h"
+#include "impeller/display_list/aiks_context.h"
 #include "impeller/display_list/dl_image_impeller.h"
 #include "impeller/renderer/backend/metal/texture_mtl.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkYUVAInfo.h"
 #include "third_party/skia/include/gpu/GpuTypes.h"
-#include "third_party/skia/include/gpu/GrBackendSurface.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
-#include "third_party/skia/include/gpu/GrYUVABackendTextures.h"
+#include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrYUVABackendTextures.h"
 #include "third_party/skia/include/gpu/ganesh/SkImageGanesh.h"
 #include "third_party/skia/include/gpu/ganesh/mtl/GrMtlBackendSurface.h"
 #include "third_party/skia/include/gpu/ganesh/mtl/GrMtlTypes.h"
@@ -22,7 +25,7 @@
 FLUTTER_ASSERT_ARC
 
 @implementation FlutterDarwinExternalTextureMetal {
-  CVMetalTextureCacheRef _textureCache;
+  fml::CFRef<CVMetalTextureCacheRef> _textureCache;
   NSObject<FlutterTexture>* _externalTexture;
   BOOL _textureFrameAvailable;
   sk_sp<flutter::DlImage> _externalImage;
@@ -36,8 +39,7 @@ FLUTTER_ASSERT_ARC
                              texture:(NSObject<FlutterTexture>*)texture
                       enableImpeller:(BOOL)enableImpeller {
   if (self = [super init]) {
-    _textureCache = textureCache;
-    CFRetain(_textureCache);
+    _textureCache.Retain(textureCache);
     _textureID = textureID;
     _externalTexture = texture;
     _enableImpeller = enableImpeller;
@@ -49,10 +51,7 @@ FLUTTER_ASSERT_ARC
 - (void)dealloc {
   CVPixelBufferRelease(_lastPixelBuffer);
   if (_textureCache) {
-    CVMetalTextureCacheFlush(_textureCache,  // cache
-                             0               // options (must be zero)
-    );
-    CFRelease(_textureCache);
+    CVMetalTextureCacheFlush(_textureCache, /* options (must be zero) */ 0);
   }
 }
 
@@ -106,9 +105,9 @@ FLUTTER_ASSERT_ARC
   // buffer will be used to materialize the image in case the application fails to provide a new
   // one.
   _externalImage.reset();
-  CVMetalTextureCacheFlush(_textureCache,  // cache
-                           0               // options (must be zero)
-  );
+  if (_textureCache) {
+    CVMetalTextureCacheFlush(_textureCache, /* options (must be zero) */ 0);
+  }
 }
 
 - (void)markNewFrameAvailable {
@@ -133,8 +132,11 @@ FLUTTER_ASSERT_ARC
   if (_pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ||
       _pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange) {
     image = [self wrapNV12ExternalPixelBuffer:pixelBuffer context:context];
+  } else if (_pixelFormat == kCVPixelFormatType_32BGRA) {
+    image = [self wrapBGRAExternalPixelBuffer:pixelBuffer context:context];
   } else {
-    image = [self wrapRGBAExternalPixelBuffer:pixelBuffer context:context];
+    FML_LOG(ERROR) << "Unsupported pixel format: " << _pixelFormat;
+    return nullptr;
   }
 
   if (!image) {
@@ -193,29 +195,14 @@ FLUTTER_ASSERT_ARC
   CVBufferRelease(uvMetalTexture);
 
   if (_enableImpeller) {
-    impeller::TextureDescriptor yDesc;
-    yDesc.storage_mode = impeller::StorageMode::kHostVisible;
-    yDesc.format = impeller::PixelFormat::kR8UNormInt;
-    yDesc.size = {textureSize.width(), textureSize.height()};
-    yDesc.mip_count = 1;
-    auto yTexture = impeller::TextureMTL::Wrapper(yDesc, yTex);
-    yTexture->SetCoordinateSystem(impeller::TextureCoordinateSystem::kUploadFromHost);
-
-    impeller::TextureDescriptor uvDesc;
-    uvDesc.storage_mode = impeller::StorageMode::kHostVisible;
-    uvDesc.format = impeller::PixelFormat::kR8G8UNormInt;
-    uvDesc.size = {textureSize.width() / 2, textureSize.height() / 2};
-    uvDesc.mip_count = 1;
-    auto uvTexture = impeller::TextureMTL::Wrapper(uvDesc, uvTex);
-    uvTexture->SetCoordinateSystem(impeller::TextureCoordinateSystem::kUploadFromHost);
-
     impeller::YUVColorSpace yuvColorSpace =
         _pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
             ? impeller::YUVColorSpace::kBT601LimitedRange
             : impeller::YUVColorSpace::kBT601FullRange;
-
-    return impeller::DlImageImpeller::MakeFromYUVTextures(context.aiks_context, yTexture, uvTexture,
-                                                          yuvColorSpace);
+    return [FlutterDarwinExternalTextureImpellerImageWrapper wrapYUVATexture:yTex
+                                                                       UVTex:uvTex
+                                                               YUVColorSpace:yuvColorSpace
+                                                                 aiksContext:context.aiks_context];
   }
 
   SkYUVColorSpace colorSpace = _pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
@@ -235,7 +222,7 @@ FLUTTER_ASSERT_ARC
   return flutter::DlImage::Make(skImage);
 }
 
-- (sk_sp<flutter::DlImage>)wrapRGBAExternalPixelBuffer:(CVPixelBufferRef)pixelBuffer
+- (sk_sp<flutter::DlImage>)wrapBGRAExternalPixelBuffer:(CVPixelBufferRef)pixelBuffer
                                                context:(flutter::Texture::PaintContext&)context {
   SkISize textureSize =
       SkISize::Make(CVPixelBufferGetWidth(pixelBuffer), CVPixelBufferGetHeight(pixelBuffer));
@@ -260,14 +247,8 @@ FLUTTER_ASSERT_ARC
   CVBufferRelease(metalTexture);
 
   if (_enableImpeller) {
-    impeller::TextureDescriptor desc;
-    desc.storage_mode = impeller::StorageMode::kHostVisible;
-    desc.format = impeller::PixelFormat::kB8G8R8A8UNormInt;
-    desc.size = {textureSize.width(), textureSize.height()};
-    desc.mip_count = 1;
-    auto texture = impeller::TextureMTL::Wrapper(desc, rgbaTex);
-    texture->SetCoordinateSystem(impeller::TextureCoordinateSystem::kUploadFromHost);
-    return impeller::DlImageImpeller::Make(texture);
+    return [FlutterDarwinExternalTextureImpellerImageWrapper wrapRGBATexture:rgbaTex
+                                                                 aiksContext:context.aiks_context];
   }
 
   auto skImage = [FlutterDarwinExternalTextureSkImageWrapper wrapRGBATexture:rgbaTex
@@ -292,15 +273,18 @@ FLUTTER_ASSERT_ARC
                         grContext:(nonnull GrDirectContext*)grContext
                             width:(size_t)width
                            height:(size_t)height {
+#if SLIMPELLER
+  return nullptr;
+#else   // SLIMPELLER
   GrMtlTextureInfo ySkiaTextureInfo;
-  ySkiaTextureInfo.fTexture = sk_cfp<const void*>{(__bridge_retained const void*)yTex};
+  ySkiaTextureInfo.fTexture.retain((__bridge GrMTLHandle)yTex);
 
   GrBackendTexture skiaBackendTextures[2];
   skiaBackendTextures[0] =
       GrBackendTextures::MakeMtl(width, height, skgpu::Mipmapped::kNo, ySkiaTextureInfo);
 
   GrMtlTextureInfo uvSkiaTextureInfo;
-  uvSkiaTextureInfo.fTexture = sk_cfp<const void*>{(__bridge_retained const void*)uvTex};
+  uvSkiaTextureInfo.fTexture.retain((__bridge GrMTLHandle)uvTex);
 
   skiaBackendTextures[1] =
       GrBackendTextures::MakeMtl(width, height, skgpu::Mipmapped::kNo, uvSkiaTextureInfo);
@@ -312,14 +296,19 @@ FLUTTER_ASSERT_ARC
   return SkImages::TextureFromYUVATextures(grContext, yuvaBackendTextures,
                                            /*imageColorSpace=*/nullptr,
                                            /*releaseProc*/ nullptr, /*releaseContext*/ nullptr);
+#endif  //  SLIMPELLER
 }
 
 + (sk_sp<SkImage>)wrapRGBATexture:(id<MTLTexture>)rgbaTex
                         grContext:(nonnull GrDirectContext*)grContext
                             width:(size_t)width
                            height:(size_t)height {
+#if SLIMPELLER
+  return nullptr;
+#else   // SLIMPELLER
+
   GrMtlTextureInfo skiaTextureInfo;
-  skiaTextureInfo.fTexture = sk_cfp<const void*>{(__bridge_retained const void*)rgbaTex};
+  skiaTextureInfo.fTexture.retain((__bridge GrMTLHandle)rgbaTex);
 
   GrBackendTexture skiaBackendTexture =
       GrBackendTextures::MakeMtl(width, height, skgpu::Mipmapped ::kNo, skiaTextureInfo);
@@ -328,5 +317,46 @@ FLUTTER_ASSERT_ARC
                                      kBGRA_8888_SkColorType, kPremul_SkAlphaType,
                                      /*colorSpace=*/nullptr, /*releaseProc*/ nullptr,
                                      /*releaseContext*/ nullptr);
+#endif  //  SLIMPELLER
+}
+@end
+
+@implementation FlutterDarwinExternalTextureImpellerImageWrapper
+
++ (sk_sp<flutter::DlImage>)wrapYUVATexture:(id<MTLTexture>)yTex
+                                     UVTex:(id<MTLTexture>)uvTex
+                             YUVColorSpace:(impeller::YUVColorSpace)colorSpace
+                               aiksContext:(nonnull impeller::AiksContext*)aiks_context {
+  impeller::TextureDescriptor yDesc;
+  yDesc.storage_mode = impeller::StorageMode::kDevicePrivate;
+  yDesc.format = impeller::PixelFormat::kR8UNormInt;
+  yDesc.size = impeller::ISize(yTex.width, yTex.height);
+  yDesc.mip_count = 1;
+  auto yTexture = impeller::TextureMTL::Wrapper(yDesc, yTex);
+  yTexture->SetCoordinateSystem(impeller::TextureCoordinateSystem::kUploadFromHost);
+
+  impeller::TextureDescriptor uvDesc;
+  uvDesc.storage_mode = impeller::StorageMode::kDevicePrivate;
+  uvDesc.format = impeller::PixelFormat::kR8G8UNormInt;
+  uvDesc.size = impeller::ISize(uvTex.width, uvTex.height);
+  uvDesc.mip_count = 1;
+  auto uvTexture = impeller::TextureMTL::Wrapper(uvDesc, uvTex);
+  uvTexture->SetCoordinateSystem(impeller::TextureCoordinateSystem::kUploadFromHost);
+  ;
+
+  return impeller::DlImageImpeller::MakeFromYUVTextures(aiks_context, yTexture, uvTexture,
+                                                        colorSpace);
+}
+
++ (sk_sp<flutter::DlImage>)wrapRGBATexture:(id<MTLTexture>)rgbaTex
+                               aiksContext:(nonnull impeller::AiksContext*)aiks_context {
+  impeller::TextureDescriptor desc;
+  desc.storage_mode = impeller::StorageMode::kDevicePrivate;
+  desc.format = impeller::PixelFormat::kB8G8R8A8UNormInt;
+  desc.size = impeller::ISize(rgbaTex.width, rgbaTex.height);
+  desc.mip_count = 1;
+  auto texture = impeller::TextureMTL::Wrapper(desc, rgbaTex);
+  texture->SetCoordinateSystem(impeller::TextureCoordinateSystem::kUploadFromHost);
+  return impeller::DlImageImpeller::Make(texture);
 }
 @end

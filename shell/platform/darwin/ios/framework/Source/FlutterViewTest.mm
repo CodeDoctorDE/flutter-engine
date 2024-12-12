@@ -4,8 +4,6 @@
 
 #import <XCTest/XCTest.h>
 
-#import "flutter/shell/platform/darwin/common/framework/Headers/FlutterMacros.h"
-#import "flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine_Internal.h"
 #import "flutter/shell/platform/darwin/ios/framework/Source/FlutterView.h"
 
 FLUTTER_ASSERT_ARC
@@ -15,23 +13,18 @@ FLUTTER_ASSERT_ARC
 @property(nonatomic, assign) BOOL isUsingImpeller;
 @end
 
-@implementation FakeDelegate {
-  std::shared_ptr<flutter::FlutterPlatformViewsController> _platformViewsController;
-}
+@implementation FakeDelegate
+
+@synthesize platformViewsController = _platformViewsController;
 
 - (instancetype)init {
   _callbackCalled = NO;
-  _platformViewsController = std::shared_ptr<flutter::FlutterPlatformViewsController>(nullptr);
   return self;
 }
 
 - (flutter::Rasterizer::Screenshot)takeScreenshot:(flutter::Rasterizer::ScreenshotType)type
                                   asBase64Encoded:(BOOL)base64Encode {
   return {};
-}
-
-- (std::shared_ptr<flutter::FlutterPlatformViewsController>&)platformViewsController {
-  return _platformViewsController;
 }
 
 - (void)flutterViewAccessibilityDidCall {
@@ -53,10 +46,10 @@ FLUTTER_ASSERT_ARC
   XCTAssertTrue(delegate.callbackCalled);
 }
 
-- (void)testFlutterViewBackgroundColorIsNotNil {
+- (void)testFlutterViewBackgroundColorIsNil {
   FakeDelegate* delegate = [[FakeDelegate alloc] init];
   FlutterView* view = [[FlutterView alloc] initWithDelegate:delegate opaque:NO enableWideGamut:NO];
-  XCTAssertNotNil(view.backgroundColor);
+  XCTAssertNil(view.backgroundColor);
 }
 
 - (void)testIgnoreWideColorWithoutImpeller {
@@ -64,7 +57,7 @@ FLUTTER_ASSERT_ARC
   delegate.isUsingImpeller = NO;
   FlutterView* view = [[FlutterView alloc] initWithDelegate:delegate opaque:NO enableWideGamut:YES];
   [view layoutSubviews];
-  XCTAssertTrue([view.layer isKindOfClass:NSClassFromString(@"CAMetalLayer")]);
+  XCTAssertTrue([view.layer isKindOfClass:[CAMetalLayer class]]);
   CAMetalLayer* layer = (CAMetalLayer*)view.layer;
   XCTAssertEqual(layer.pixelFormat, MTLPixelFormatBGRA8Unorm);
 }

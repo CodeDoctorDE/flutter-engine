@@ -5,6 +5,7 @@
 #include "flutter/fml/cpu_affinity.h"
 #include "flutter/fml/build_config.h"
 
+#include <cstdint>
 #include <fstream>
 #include <optional>
 #include <string>
@@ -58,6 +59,8 @@ CPUSpeedTracker::CPUSpeedTracker(std::vector<CpuIndexAndSpeed> data)
     }
     if (data.speed == min_speed_value) {
       efficiency_.push_back(data.index);
+    } else {
+      not_efficiency_.push_back(data.index);
     }
   }
 
@@ -77,6 +80,8 @@ const std::vector<size_t>& CPUSpeedTracker::GetIndices(
       return efficiency_;
     case CpuAffinity::kNotPerformance:
       return not_performance_;
+    case CpuAffinity::kNotEfficiency:
+      return not_efficiency_;
   }
 }
 

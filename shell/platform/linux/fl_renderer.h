@@ -7,10 +7,10 @@
 
 #include <gtk/gtk.h>
 
-#include "flutter/shell/platform/linux/public/flutter_linux/fl_dart_project.h"
-#include "flutter/shell/platform/linux/public/flutter_linux/fl_view.h"
-
 #include "flutter/shell/platform/embedder/embedder.h"
+
+#include "flutter/shell/platform/linux/fl_renderable.h"
+#include "flutter/shell/platform/linux/public/flutter_linux/fl_engine.h"
 
 G_BEGIN_DECLS
 
@@ -20,9 +20,7 @@ G_BEGIN_DECLS
  */
 
 typedef enum {
-  // NOLINTBEGIN(readability-identifier-naming)
   FL_RENDERER_ERROR_FAILED,
-  // NOLINTEND(readability-identifier-naming)
 } FlRendererError;
 
 GQuark fl_renderer_error_quark(void) G_GNUC_CONST;
@@ -59,39 +57,45 @@ struct _FlRendererClass {
   void (*clear_current)(FlRenderer* renderer);
 
   /**
-   * Virtual method called when Flutter needs a backing store for a specific
-   * #FlutterLayer.
+   * Virtual method called when Flutter wants to get the refresh rate of the
+   * renderer.
    * @renderer: an #FlRenderer.
-   * @config: backing store config.
-   * @backing_store_out: saves created backing store.
    *
-   * Returns %TRUE if successful.
+   * Returns: The refresh rate of the display in Hz. If the refresh rate is
+   * not available, returns -1.0.
    */
-  gboolean (*create_backing_store)(FlRenderer* renderer,
-                                   const FlutterBackingStoreConfig* config,
-                                   FlutterBackingStore* backing_store_out);
-
-  /**
-   * Virtual method called when Flutter wants to release the backing store.
-   * @renderer: an #FlRenderer.
-   * @backing_store: backing store to be released.
-   *
-   * Returns %TRUE if successful.
-   */
-  gboolean (*collect_backing_store)(FlRenderer* renderer,
-                                    const FlutterBackingStore* backing_store);
+  gdouble (*get_refresh_rate)(FlRenderer* renderer);
 };
 
 /**
- * fl_renderer_start:
+ * fl_renderer_set_engine:
  * @renderer: an #FlRenderer.
- * @view: the view Flutter is renderering to.
+ * @engine: an #FlEngine.
  *
- * Start the renderer.
- *
- * Returns: %TRUE if successfully started.
+ * Called when the renderer is connected to an engine.
  */
-gboolean fl_renderer_start(FlRenderer* renderer, FlView* view);
+void fl_renderer_set_engine(FlRenderer* renderer, FlEngine* engine);
+
+/**
+ * fl_renderer_add_renderable:
+ * @renderer: an #FlRenderer.
+ * @view_id: the ID of the view.
+ * @renderable: object that is to be rendered on.
+ *
+ * Add a view to render on.
+ */
+void fl_renderer_add_renderable(FlRenderer* renderer,
+                                FlutterViewId view_id,
+                                FlRenderable* renderable);
+
+/**
+ * fl_renderer_remove_view:
+ * @renderer: an #FlRenderer.
+ * @view_id: the ID of the view.
+ *
+ * Remove a view from the renderer.
+ */
+void fl_renderer_remove_view(FlRenderer* renderer, FlutterViewId view_id);
 
 /**
  * fl_renderer_get_proc_address:
@@ -170,6 +174,7 @@ gboolean fl_renderer_collect_backing_store(
 /**
  * fl_renderer_present_layers:
  * @renderer: an #FlRenderer.
+ * @view_id: view to present.
  * @layers: layers to be composited.
  * @layers_count: number of layers.
  *
@@ -179,6 +184,7 @@ gboolean fl_renderer_collect_backing_store(
  * Returns %TRUE if successful.
  */
 gboolean fl_renderer_present_layers(FlRenderer* renderer,
+                                    FlutterViewId view_id,
                                     const FlutterLayer** layers,
                                     size_t layers_count);
 
@@ -208,12 +214,18 @@ void fl_renderer_setup(FlRenderer* renderer);
 /**
  * fl_renderer_render:
  * @renderer: an #FlRenderer.
+ * @view_id: view to render.
  * @width: width of the window in pixels.
  * @height: height of the window in pixels.
+ * @background_color: color to use for background.
  *
  * Performs OpenGL commands to render current Flutter view.
  */
-void fl_renderer_render(FlRenderer* renderer, int width, int height);
+void fl_renderer_render(FlRenderer* renderer,
+                        FlutterViewId view_id,
+                        int width,
+                        int height,
+                        const GdkRGBA* background_color);
 
 /**
  * fl_renderer_cleanup:
@@ -222,6 +234,15 @@ void fl_renderer_render(FlRenderer* renderer, int width, int height);
  * context.
  */
 void fl_renderer_cleanup(FlRenderer* renderer);
+
+/**
+ * fl_renderer_get_refresh_rate:
+ * @renderer: an #FlRenderer.
+ *
+ * Returns: The refresh rate of the display in Hz. If the refresh rate is
+ * not available, returns -1.0.
+ */
+gdouble fl_renderer_get_refresh_rate(FlRenderer* renderer);
 
 G_END_DECLS
 

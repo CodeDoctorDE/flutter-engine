@@ -13,10 +13,6 @@
 #include "impeller/entity/mtl/framebuffer_blend_shaders.h"
 #include "impeller/entity/mtl/modern_shaders.h"
 
-#if IMPELLER_ENABLE_3D
-#include "impeller/scene/shaders/mtl/scene_shaders.h"  // nogncheck
-#endif                                                 // IMPELLER_ENABLE_3D
-
 FLUTTER_ASSERT_ARC
 
 static std::shared_ptr<impeller::ContextMTL> CreateImpellerContext(
@@ -24,23 +20,13 @@ static std::shared_ptr<impeller::ContextMTL> CreateImpellerContext(
   std::vector<std::shared_ptr<fml::Mapping>> shader_mappings = {
       std::make_shared<fml::NonOwnedMapping>(impeller_entity_shaders_data,
                                              impeller_entity_shaders_length),
-#if IMPELLER_ENABLE_3D
-      std::make_shared<fml::NonOwnedMapping>(impeller_scene_shaders_data,
-                                             impeller_scene_shaders_length),
-#endif  // IMPELLER_ENABLE_3D
       std::make_shared<fml::NonOwnedMapping>(impeller_modern_shaders_data,
                                              impeller_modern_shaders_length),
       std::make_shared<fml::NonOwnedMapping>(impeller_framebuffer_blend_shaders_data,
                                              impeller_framebuffer_blend_shaders_length),
   };
-  auto context = impeller::ContextMTL::Create(shader_mappings, is_gpu_disabled_sync_switch,
-                                              "Impeller Library");
-  if (!context) {
-    FML_LOG(ERROR) << "Could not create Metal Impeller Context.";
-    return nullptr;
-  }
-
-  return context;
+  return impeller::ContextMTL::Create(shader_mappings, is_gpu_disabled_sync_switch,
+                                      "Impeller Library");
 }
 
 @implementation FlutterDarwinContextMetalImpeller
@@ -49,11 +35,9 @@ static std::shared_ptr<impeller::ContextMTL> CreateImpellerContext(
   self = [super init];
   if (self != nil) {
     _context = CreateImpellerContext(is_gpu_disabled_sync_switch);
+    FML_CHECK(_context) << "Could not create Metal Impeller Context.";
     id<MTLDevice> device = _context->GetMTLDevice();
-    if (!device) {
-      FML_DLOG(ERROR) << "Could not acquire Metal device.";
-      return nil;
-    }
+    FML_CHECK(device) << "Could not acquire Metal device.";
 
     CVMetalTextureCacheRef textureCache;
     CVReturn cvReturn = CVMetalTextureCacheCreate(kCFAllocatorDefault,  // allocator
@@ -63,10 +47,7 @@ static std::shared_ptr<impeller::ContextMTL> CreateImpellerContext(
                                                   &textureCache  // [out] cache
     );
 
-    if (cvReturn != kCVReturnSuccess) {
-      FML_DLOG(ERROR) << "Could not create Metal texture cache.";
-      return nil;
-    }
+    FML_CHECK(cvReturn == kCVReturnSuccess) << "Could not acquire Metal device.";
     _textureCache.Reset(textureCache);
   }
   return self;

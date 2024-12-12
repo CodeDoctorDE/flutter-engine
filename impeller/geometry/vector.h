@@ -44,10 +44,10 @@ struct Vector3 {
    *
    *  @return the calculated length.
    */
-  constexpr Scalar Length() const { return sqrt(x * x + y * y + z * z); }
+  constexpr Scalar GetLength() const { return sqrt(x * x + y * y + z * z); }
 
   constexpr Vector3 Normalize() const {
-    const auto len = Length();
+    const auto len = GetLength();
     return {x / len, y / len, z / len};
   }
 
@@ -255,6 +255,11 @@ struct Vector4 {
   constexpr Vector4(std::array<Scalar, 4> values)
       : x(values[0]), y(values[1]), z(values[2]), w(values[3]) {}
 
+  constexpr bool IsFinite() const {
+    return std::isfinite(x) && std::isfinite(y) && std::isfinite(z) &&
+           std::isfinite(w);
+  }
+
   Vector4 Normalize() const {
     const Scalar inverse = 1.0f / sqrt(x * x + y * y + z * z + w * w);
     return Vector4(x * inverse, y * inverse, z * inverse, w * inverse);
@@ -309,6 +314,8 @@ struct Vector4 {
   constexpr Vector4 Lerp(const Vector4& v, Scalar t) const {
     return *this + (v - *this) * t;
   }
+
+  constexpr Vector2 xy() const { return Vector2(x, y); }
 
   std::string ToString() const;
 };

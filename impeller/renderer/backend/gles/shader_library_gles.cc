@@ -10,7 +10,6 @@
 #include "impeller/base/config.h"
 #include "impeller/base/validation.h"
 #include "impeller/renderer/backend/gles/shader_function_gles.h"
-#include "impeller/shader_archive/multi_arch_shader_archive.h"
 #include "impeller/shader_archive/shader_archive.h"
 
 namespace impeller {
@@ -58,7 +57,6 @@ ShaderLibraryGLES::ShaderLibraryGLES(
                                                          ) -> bool {
     const auto stage = ToShaderStage(type);
     const auto key_name = GLESShaderNameToShaderKeyName(name, stage);
-
     functions[ShaderKey{key_name, stage}] = std::shared_ptr<ShaderFunctionGLES>(
         new ShaderFunctionGLES(library_id,  //
                                stage,       //
@@ -69,13 +67,12 @@ ShaderLibraryGLES::ShaderLibraryGLES(
     return true;
   };
   for (auto library : shader_libraries) {
-    auto gles_archive = MultiArchShaderArchive::CreateArchiveFromMapping(
-        std::move(library), ArchiveRenderingBackend::kOpenGLES);
-    if (!gles_archive || !gles_archive->IsValid()) {
-      VALIDATION_LOG << "Could not construct shader library.";
+    auto blob_library = ShaderArchive{std::move(library)};
+    if (!blob_library.IsValid()) {
+      VALIDATION_LOG << "Could not construct blob library for shaders.";
       return;
     }
-    gles_archive->IterateAllShaders(iterator);
+    blob_library.IterateAllShaders(iterator);
   }
 
   functions_ = functions;

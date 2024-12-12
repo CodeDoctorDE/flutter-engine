@@ -8,6 +8,8 @@ namespace impeller {
 
 RectGeometry::RectGeometry(Rect rect) : rect_(rect) {}
 
+RectGeometry::~RectGeometry() = default;
+
 GeometryResult RectGeometry::GetPositionBuffer(const ContentContext& renderer,
                                                const Entity& entity,
                                                RenderPass& pass) const {
@@ -23,20 +25,6 @@ GeometryResult RectGeometry::GetPositionBuffer(const ContentContext& renderer,
           },
       .transform = entity.GetShaderTransform(pass),
   };
-}
-
-// |Geometry|
-GeometryResult RectGeometry::GetPositionUVBuffer(Rect texture_coverage,
-                                                 Matrix effect_transform,
-                                                 const ContentContext& renderer,
-                                                 const Entity& entity,
-                                                 RenderPass& pass) const {
-  return ComputeUVGeometryForRect(rect_, texture_coverage, effect_transform,
-                                  renderer, entity, pass);
-}
-
-GeometryVertexType RectGeometry::GetVertexType() const {
-  return GeometryVertexType::kPosition;
 }
 
 std::optional<Rect> RectGeometry::GetCoverage(const Matrix& transform) const {

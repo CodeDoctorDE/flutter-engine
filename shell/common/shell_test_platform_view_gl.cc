@@ -11,10 +11,6 @@
 #include "flutter/shell/gpu/gpu_surface_gl_skia.h"
 #include "impeller/entity/gles/entity_shaders_gles.h"
 
-#if IMPELLER_ENABLE_3D
-#include "impeller/scene/shaders/gles/scene_shaders_gles.h"  // nogncheck
-#endif
-
 namespace flutter {
 namespace testing {
 
@@ -23,11 +19,20 @@ static std::vector<std::shared_ptr<fml::Mapping>> ShaderLibraryMappings() {
       std::make_shared<fml::NonOwnedMapping>(
           impeller_entity_shaders_gles_data,
           impeller_entity_shaders_gles_length),
-#if IMPELLER_ENABLE_3D
-      std::make_shared<fml::NonOwnedMapping>(
-          impeller_scene_shaders_gles_data, impeller_scene_shaders_gles_length),
-#endif
   };
+}
+
+std::unique_ptr<ShellTestPlatformView> ShellTestPlatformView::CreateGL(
+    PlatformView::Delegate& delegate,
+    const TaskRunners& task_runners,
+    const std::shared_ptr<ShellTestVsyncClock>& vsync_clock,
+    const CreateVsyncWaiter& create_vsync_waiter,
+    const std::shared_ptr<ShellTestExternalViewEmbedder>&
+        shell_test_external_view_embedder,
+    const std::shared_ptr<const fml::SyncSwitch>& is_gpu_disabled_sync_switch) {
+  return std::make_unique<ShellTestPlatformViewGL>(
+      delegate, task_runners, vsync_clock, create_vsync_waiter,
+      shell_test_external_view_embedder);
 }
 
 ShellTestPlatformViewGL::ShellTestPlatformViewGL(

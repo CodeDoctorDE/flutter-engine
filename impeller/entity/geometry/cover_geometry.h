@@ -15,7 +15,7 @@ class CoverGeometry final : public Geometry {
  public:
   CoverGeometry();
 
-  ~CoverGeometry() = default;
+  ~CoverGeometry() override = default;
 
   // |Geometry|
   bool CoversArea(const Matrix& transform, const Rect& rect) const override;
@@ -29,24 +29,12 @@ class CoverGeometry final : public Geometry {
                                    RenderPass& pass) const override;
 
   // |Geometry|
-  GeometryVertexType GetVertexType() const override;
-
-  // |Geometry|
   std::optional<Rect> GetCoverage(const Matrix& transform) const override;
-
-  // |Geometry|
-  GeometryResult GetPositionUVBuffer(Rect texture_coverage,
-                                     Matrix effect_transform,
-                                     const ContentContext& renderer,
-                                     const Entity& entity,
-                                     RenderPass& pass) const override;
 
   CoverGeometry(const CoverGeometry&) = delete;
 
   CoverGeometry& operator=(const CoverGeometry&) = delete;
 };
-
-static_assert(std::is_trivially_destructible<CoverGeometry>::value);
 
 }  // namespace impeller
 

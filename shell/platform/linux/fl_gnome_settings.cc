@@ -22,7 +22,7 @@ struct _FlGnomeSettings {
   GSettings* interface_settings;
 };
 
-enum { kProp0, kPropInterfaceSettings, kPropLast };
+enum { PROP_0, PROP_INTERFACE_SETTINGS, PROP_LAST };
 
 static void fl_gnome_settings_iface_init(FlSettingsInterface* iface);
 
@@ -64,11 +64,11 @@ static FlColorScheme fl_gnome_settings_get_color_scheme(FlSettings* settings) {
 }
 
 static gboolean fl_gnome_settings_get_enable_animations(FlSettings* settings) {
-  return true;
+  return TRUE;
 }
 
 static gboolean fl_gnome_settings_get_high_contrast(FlSettings* settings) {
-  return false;
+  return FALSE;
 }
 
 static gdouble fl_gnome_settings_get_text_scaling_factor(FlSettings* settings) {
@@ -106,7 +106,7 @@ static void fl_gnome_settings_set_property(GObject* object,
                                            GParamSpec* pspec) {
   FlGnomeSettings* self = FL_GNOME_SETTINGS(object);
   switch (prop_id) {
-    case kPropInterfaceSettings:
+    case PROP_INTERFACE_SETTINGS:
       fl_gnome_settings_set_interface_settings(
           self, G_SETTINGS(g_value_get_object(value)));
       break;
@@ -130,7 +130,7 @@ static void fl_gnome_settings_class_init(FlGnomeSettingsClass* klass) {
   object_class->set_property = fl_gnome_settings_set_property;
 
   g_object_class_install_property(
-      object_class, kPropInterfaceSettings,
+      object_class, PROP_INTERFACE_SETTINGS,
       g_param_spec_object(
           kInterfaceSettings, kInterfaceSettings, kDesktopInterfaceSchema,
           g_settings_get_type(),

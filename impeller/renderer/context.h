@@ -8,8 +8,8 @@
 #include <memory>
 #include <string>
 
+#include "fml/closure.h"
 #include "impeller/core/allocator.h"
-#include "impeller/core/capture.h"
 #include "impeller/core/formats.h"
 #include "impeller/renderer/capabilities.h"
 #include "impeller/renderer/command_queue.h"
@@ -171,18 +171,20 @@ class Context {
   ///
   virtual void Shutdown() = 0;
 
-  CaptureContext capture;
-
   /// Stores a task on the `ContextMTL` that is awaiting access for the GPU.
   ///
   /// The task will be executed in the event that the GPU access has changed to
   /// being available or that the task has been canceled. The task should
   /// operate with the `SyncSwitch` to make sure the GPU is accessible.
   ///
+  /// If the queue of pending tasks is cleared without GPU access, then the
+  /// failure callback will be invoked and the primary task function will not
+  ///
   /// Threadsafe.
   ///
   /// `task` will be executed on the platform thread.
-  virtual void StoreTaskForGPU(const std::function<void()>& task) {
+  virtual void StoreTaskForGPU(const fml::closure& task,
+                               const fml::closure& failure) {
     FML_CHECK(false && "not supported in this context");
   }
 
@@ -193,6 +195,52 @@ class Context {
   /// The workload includes initializing commonly used but not default
   /// shader variants, as well as forcing driver initialization.
   virtual void InitializeCommonlyUsedShadersIfNeeded() const {}
+
+  /// Dispose resources that are cached on behalf of the current thread.
+  ///
+  /// Some backends such as Vulkan may cache resources that can be reused while
+  /// executing a rendering operation.  This API can be called after the
+  /// operation completes in order to clear the cache.
+  virtual void DisposeThreadLocalCachedResources() {}
+
+  /// @brief Enqueue command_buffer for submission by the end of the frame.
+  ///
+  /// Certain backends may immediately flush the command buffer if batch
+  /// submission is not supported. This functionality is not thread safe
+  /// and should only be used via the ContentContext for rendering a
+  /// 2D workload.
+  ///
+  /// Returns true if submission has succeeded. If the buffer is enqueued
+  /// then no error may be returned until FlushCommandBuffers is called.
+  [[nodiscard]] virtual bool EnqueueCommandBuffer(
+      std::shared_ptr<CommandBuffer> command_buffer);
+
+  /// @brief Flush all pending command buffers.
+  ///
+  /// Returns whether or not submission was successful. This functionality
+  /// is not threadsafe and should only be used via the ContentContext for
+  /// rendering a 2D workload.
+  [[nodiscard]] virtual bool FlushCommandBuffers();
+
+  virtual bool AddTrackingFence(const std::shared_ptr<Texture>& texture) const;
+
+  virtual std::shared_ptr<const IdleWaiter> GetIdleWaiter() const;
+
+  //----------------------------------------------------------------------------
+  /// Resets any thread local state that may interfere with embedders.
+  ///
+  /// Today, only the OpenGL backend can trample on thread local state that the
+  /// embedder can access. This call puts the GL state in a sane "clean" state.
+  ///
+  /// Impeller itself is resilient to a dirty thread local state table.
+  ///
+  virtual void ResetThreadLocalState() const;
+
+  /// @brief Retrieve the runtime stage for this context type.
+  ///
+  /// This is used by the engine shell and other subsystems for loading the
+  /// correct shader types.
+  virtual RuntimeStageBackend GetRuntimeStageBackend() const = 0;
 
  protected:
   Context();

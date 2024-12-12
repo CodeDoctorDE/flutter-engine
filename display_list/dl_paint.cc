@@ -4,6 +4,8 @@
 
 #include "flutter/display_list/dl_paint.h"
 
+#include "flutter/display_list/utils/dl_comparable.h"
+
 namespace flutter {
 
 DlPaint::DlPaint(DlColor color)
@@ -30,8 +32,7 @@ bool DlPaint::operator==(DlPaint const& other) const {
          Equals(color_source_, other.color_source_) &&    //
          Equals(color_filter_, other.color_filter_) &&    //
          Equals(image_filter_, other.image_filter_) &&    //
-         Equals(mask_filter_, other.mask_filter_) &&      //
-         Equals(path_effect_, other.path_effect_);
+         Equals(mask_filter_, other.mask_filter_);
 }
 
 const DlPaint DlPaint::kDefault;

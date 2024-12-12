@@ -26,6 +26,8 @@ executable("flutter-embedder-test-bin") {
   deps = [
     "${fuchsia_sdk}/fidl/fuchsia.inspect",
     "${fuchsia_sdk}/fidl/fuchsia.logger",
+    "${fuchsia_sdk}/fidl/fuchsia.sysmem",
+    "${fuchsia_sdk}/fidl/fuchsia.sysmem2",
     "${fuchsia_sdk}/fidl/fuchsia.tracing.provider",
     "${fuchsia_sdk}/fidl/fuchsia.ui.app",
     "${fuchsia_sdk}/fidl/fuchsia.ui.composition",
@@ -57,8 +59,4 @@ fuchsia_test_archive("flutter-embedder-test") {
     # TODO(fxbug.dev/106575): Fix this with subpackages.
     "//flutter/shell/platform/fuchsia/flutter:oot_flutter_jit_runner",
   ]
-
-  binary = "$target_name"
-
-  cml_file = rebase_path("meta/$target_name.cml")
 }

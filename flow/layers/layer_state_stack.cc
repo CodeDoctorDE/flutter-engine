@@ -35,6 +35,10 @@ class DummyDelegate : public LayerStateStack::Delegate {
     error();
     return {};
   }
+  DlMatrix matrix() const override {
+    error();
+    return dummy_matrix_;
+  }
   SkM44 matrix_4x4() const override {
     error();
     return {};
@@ -52,7 +56,8 @@ class DummyDelegate : public LayerStateStack::Delegate {
   void saveLayer(const SkRect& bounds,
                  LayerStateStack::RenderingAttributes& attributes,
                  DlBlendMode blend,
-                 const DlImageFilter* backdrop) override {}
+                 const DlImageFilter* backdrop,
+                 std::optional<int64_t> backdrop_id) override {}
   void restore() override {}
 
   void translate(SkScalar tx, SkScalar ty) override {}
@@ -68,6 +73,7 @@ class DummyDelegate : public LayerStateStack::Delegate {
   static void error() {
     FML_DCHECK(false) << "LayerStateStack state queried without a delegate";
   }
+  const DlMatrix dummy_matrix_;
 };
 const std::shared_ptr<DummyDelegate> DummyDelegate::kInstance =
     std::make_shared<DummyDelegate>();
@@ -87,6 +93,7 @@ class DlCanvasDelegate : public LayerStateStack::Delegate {
   SkRect device_cull_rect() const override {
     return canvas_->GetDestinationClipBounds();
   }
+  DlMatrix matrix() const override { return canvas_->GetMatrix(); }
   SkM44 matrix_4x4() const override {
     return canvas_->GetTransformFullPerspective();
   }
@@ -99,10 +106,13 @@ class DlCanvasDelegate : public LayerStateStack::Delegate {
   void saveLayer(const SkRect& bounds,
                  LayerStateStack::RenderingAttributes& attributes,
                  DlBlendMode blend_mode,
-                 const DlImageFilter* backdrop) override {
+                 const DlImageFilter* backdrop,
+                 std::optional<int64_t> backdrop_id) override {
     TRACE_EVENT0("flutter", "Canvas::saveLayer");
     DlPaint paint;
-    canvas_->SaveLayer(&bounds, attributes.fill(paint, blend_mode), backdrop);
+    std::optional<const DlRect> rect = ToDlRect(bounds);
+    canvas_->SaveLayer(rect, attributes.fill(paint, blend_mode), backdrop,
+                       backdrop_id);
   }
   void restore() override { canvas_->Restore(); }
 
@@ -137,65 +147,69 @@ class DlCanvasDelegate : public LayerStateStack::Delegate {
 
 class PrerollDelegate : public LayerStateStack::Delegate {
  public:
-  PrerollDelegate(const SkRect& cull_rect, const SkMatrix& matrix)
-      : tracker_(cull_rect, matrix) {}
+  PrerollDelegate(const SkRect& cull_rect, const SkMatrix& matrix) {
+    save_stack_.emplace_back(cull_rect, matrix);
+  }
 
   void decommission() override {}
 
-  SkM44 matrix_4x4() const override { return tracker_.matrix_4x4(); }
-  SkMatrix matrix_3x3() const override { return tracker_.matrix_3x3(); }
-  SkRect local_cull_rect() const override { return tracker_.local_cull_rect(); }
+  DlMatrix matrix() const override { return state().matrix(); }
+  SkM44 matrix_4x4() const override { return state().matrix_4x4(); }
+  SkMatrix matrix_3x3() const override { return state().matrix_3x3(); }
+  SkRect local_cull_rect() const override { return state().local_cull_rect(); }
   SkRect device_cull_rect() const override {
-    return tracker_.device_cull_rect();
+    return state().device_cull_rect();
   }
   bool content_culled(const SkRect& content_bounds) const override {
-    return tracker_.content_culled(content_bounds);
+    return state().content_culled(content_bounds);
   }
 
-  void save() override { tracker_.save(); }
+  void save() override { save_stack_.emplace_back(state()); }
   void saveLayer(const SkRect& bounds,
                  LayerStateStack::RenderingAttributes& attributes,
                  DlBlendMode blend,
-                 const DlImageFilter* backdrop) override {
-    tracker_.save();
+                 const DlImageFilter* backdrop,
+                 std::optional<int64_t> backdrop_id) override {
+    save_stack_.emplace_back(state());
   }
-  void restore() override { tracker_.restore(); }
+  void restore() override { save_stack_.pop_back(); }
 
   void translate(SkScalar tx, SkScalar ty) override {
-    tracker_.translate(tx, ty);
+    state().translate(tx, ty);
   }
-  void transform(const SkM44& m44) override { tracker_.transform(m44); }
-  void transform(const SkMatrix& matrix) override {
-    tracker_.transform(matrix);
-  }
+  void transform(const SkM44& m44) override { state().transform(m44); }
+  void transform(const SkMatrix& matrix) override { state().transform(matrix); }
   void integralTransform() override {
-    if (tracker_.using_4x4_matrix()) {
+    if (state().using_4x4_matrix()) {
       SkM44 integral;
-      if (RasterCacheUtil::ComputeIntegralTransCTM(tracker_.matrix_4x4(),
+      if (RasterCacheUtil::ComputeIntegralTransCTM(state().matrix_4x4(),
                                                    &integral)) {
-        tracker_.setTransform(integral);
+        state().setTransform(integral);
       }
     } else {
       SkMatrix integral;
-      if (RasterCacheUtil::ComputeIntegralTransCTM(tracker_.matrix_3x3(),
+      if (RasterCacheUtil::ComputeIntegralTransCTM(state().matrix_3x3(),
                                                    &integral)) {
-        tracker_.setTransform(integral);
+        state().setTransform(integral);
       }
     }
   }
 
   void clipRect(const SkRect& rect, ClipOp op, bool is_aa) override {
-    tracker_.clipRect(rect, op, is_aa);
+    state().clipRect(rect, op, is_aa);
   }
   void clipRRect(const SkRRect& rrect, ClipOp op, bool is_aa) override {
-    tracker_.clipRRect(rrect, op, is_aa);
+    state().clipRRect(rrect, op, is_aa);
   }
   void clipPath(const SkPath& path, ClipOp op, bool is_aa) override {
-    tracker_.clipPath(path, op, is_aa);
+    state().clipPath(path, op, is_aa);
   }
 
  private:
-  DisplayListMatrixClipTracker tracker_;
+  DisplayListMatrixClipState& state() { return save_stack_.back(); }
+  const DisplayListMatrixClipState& state() const { return save_stack_.back(); }
+
+  std::vector<DisplayListMatrixClipState> save_stack_;
 };
 
 // ==============================================================
@@ -229,12 +243,6 @@ class SaveLayerEntry : public LayerStateStack::StateEntry {
     stack->outstanding_ = {};
   }
   void restore(LayerStateStack* stack) const override {
-    if (stack->checkerboard_func_) {
-      DlCanvas* canvas = stack->canvas_delegate();
-      if (canvas != nullptr) {
-        (*stack->checkerboard_func_)(canvas, bounds_);
-      }
-    }
     stack->delegate_->restore();
     stack->outstanding_ = old_attributes_;
   }
@@ -281,7 +289,7 @@ class OpacityEntry : public LayerStateStack::StateEntry {
 class ImageFilterEntry : public LayerStateStack::StateEntry {
  public:
   ImageFilterEntry(const SkRect& bounds,
-                   const std::shared_ptr<const DlImageFilter>& filter,
+                   const std::shared_ptr<DlImageFilter>& filter,
                    const LayerStateStack::RenderingAttributes& prev)
       : bounds_(bounds),
         filter_(filter),
@@ -303,8 +311,8 @@ class ImageFilterEntry : public LayerStateStack::StateEntry {
 
  private:
   const SkRect bounds_;
-  const std::shared_ptr<const DlImageFilter> filter_;
-  const std::shared_ptr<const DlImageFilter> old_filter_;
+  const std::shared_ptr<DlImageFilter> filter_;
+  const std::shared_ptr<DlImageFilter> old_filter_;
   const SkRect old_bounds_;
 
   FML_DISALLOW_COPY_ASSIGN_AND_MOVE(ImageFilterEntry);
@@ -345,15 +353,18 @@ class ColorFilterEntry : public LayerStateStack::StateEntry {
 class BackdropFilterEntry : public SaveLayerEntry {
  public:
   BackdropFilterEntry(const SkRect& bounds,
-                      const std::shared_ptr<const DlImageFilter>& filter,
+                      const std::shared_ptr<DlImageFilter>& filter,
                       DlBlendMode blend_mode,
+                      std::optional<int64_t> backdrop_id,
                       const LayerStateStack::RenderingAttributes& prev)
-      : SaveLayerEntry(bounds, blend_mode, prev), filter_(filter) {}
+      : SaveLayerEntry(bounds, blend_mode, prev),
+        filter_(filter),
+        backdrop_id_(backdrop_id) {}
   ~BackdropFilterEntry() override = default;
 
   void apply(LayerStateStack* stack) const override {
     stack->delegate_->saveLayer(bounds_, stack->outstanding_, blend_mode_,
-                                filter_.get());
+                                filter_.get(), backdrop_id_);
     stack->outstanding_ = {};
   }
 
@@ -369,7 +380,8 @@ class BackdropFilterEntry : public SaveLayerEntry {
   }
 
  private:
-  const std::shared_ptr<const DlImageFilter> filter_;
+  const std::shared_ptr<DlImageFilter> filter_;
+  std::optional<int64_t> backdrop_id_;
 
   FML_DISALLOW_COPY_ASSIGN_AND_MOVE(BackdropFilterEntry);
 };
@@ -545,7 +557,7 @@ void MutatorContext::applyOpacity(const SkRect& bounds, SkScalar opacity) {
 
 void MutatorContext::applyImageFilter(
     const SkRect& bounds,
-    const std::shared_ptr<const DlImageFilter>& filter) {
+    const std::shared_ptr<DlImageFilter>& filter) {
   if (filter) {
     layer_state_stack_->push_image_filter(bounds, filter);
   }
@@ -561,9 +573,10 @@ void MutatorContext::applyColorFilter(
 
 void MutatorContext::applyBackdropFilter(
     const SkRect& bounds,
-    const std::shared_ptr<const DlImageFilter>& filter,
-    DlBlendMode blend_mode) {
-  layer_state_stack_->push_backdrop(bounds, filter, blend_mode);
+    const std::shared_ptr<DlImageFilter>& filter,
+    DlBlendMode blend_mode,
+    std::optional<int64_t> backdrop_id) {
+  layer_state_stack_->push_backdrop(bounds, filter, blend_mode, backdrop_id);
 }
 
 void MutatorContext::translate(SkScalar tx, SkScalar ty) {
@@ -585,7 +598,7 @@ void MutatorContext::transform(const SkMatrix& matrix) {
 }
 
 void MutatorContext::transform(const SkM44& m44) {
-  if (DisplayListMatrixClipTracker::is_3x3(m44)) {
+  if (DisplayListMatrixClipState::is_3x3(m44)) {
     transform(m44.asM33());
   } else {
     layer_state_stack_->maybe_save_layer_for_transform(save_needed_);
@@ -700,7 +713,7 @@ void LayerStateStack::push_color_filter(
 
 void LayerStateStack::push_image_filter(
     const SkRect& bounds,
-    const std::shared_ptr<const DlImageFilter>& filter) {
+    const std::shared_ptr<DlImageFilter>& filter) {
   maybe_save_layer(filter);
   state_stack_.emplace_back(
       std::make_unique<ImageFilterEntry>(bounds, filter, outstanding_));
@@ -709,10 +722,11 @@ void LayerStateStack::push_image_filter(
 
 void LayerStateStack::push_backdrop(
     const SkRect& bounds,
-    const std::shared_ptr<const DlImageFilter>& filter,
-    DlBlendMode blend_mode) {
+    const std::shared_ptr<DlImageFilter>& filter,
+    DlBlendMode blend_mode,
+    std::optional<int64_t> backdrop_id) {
   state_stack_.emplace_back(std::make_unique<BackdropFilterEntry>(
-      bounds, filter, blend_mode, outstanding_));
+      bounds, filter, blend_mode, backdrop_id, outstanding_));
   apply_last_entry();
 }
 
@@ -821,7 +835,7 @@ void LayerStateStack::maybe_save_layer(
 }
 
 void LayerStateStack::maybe_save_layer(
-    const std::shared_ptr<const DlImageFilter>& filter) {
+    const std::shared_ptr<DlImageFilter>& filter) {
   if (outstanding_.image_filter) {
     // TBD: compose the 2 image filters together.
     save_layer(outstanding_.save_layer_bounds);

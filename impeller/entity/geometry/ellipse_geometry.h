@@ -17,7 +17,7 @@ class EllipseGeometry final : public Geometry {
  public:
   explicit EllipseGeometry(Rect bounds);
 
-  ~EllipseGeometry() = default;
+  ~EllipseGeometry() override = default;
 
   // |Geometry|
   bool CoversArea(const Matrix& transform, const Rect& rect) const override;
@@ -32,17 +32,7 @@ class EllipseGeometry final : public Geometry {
                                    RenderPass& pass) const override;
 
   // |Geometry|
-  GeometryVertexType GetVertexType() const override;
-
-  // |Geometry|
   std::optional<Rect> GetCoverage(const Matrix& transform) const override;
-
-  // |Geometry|
-  GeometryResult GetPositionUVBuffer(Rect texture_coverage,
-                                     Matrix effect_transform,
-                                     const ContentContext& renderer,
-                                     const Entity& entity,
-                                     RenderPass& pass) const override;
 
   Rect bounds_;
 

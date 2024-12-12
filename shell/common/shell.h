@@ -28,7 +28,6 @@
 #include "flutter/lib/ui/painting/image_generator_registry.h"
 #include "flutter/lib/ui/semantics/custom_accessibility_action.h"
 #include "flutter/lib/ui/semantics/semantics_node.h"
-#include "flutter/lib/ui/volatile_path_tracker.h"
 #include "flutter/lib/ui/window/platform_message.h"
 #include "flutter/runtime/dart_vm_lifecycle.h"
 #include "flutter/runtime/platform_data.h"
@@ -40,6 +39,7 @@
 #include "flutter/shell/common/rasterizer.h"
 #include "flutter/shell/common/resource_cache_limit_calculator.h"
 #include "flutter/shell/common/shell_io_manager.h"
+#include "impeller/renderer/context.h"
 #include "impeller/runtime_stage/runtime_stage.h"
 
 namespace flutter {
@@ -129,7 +129,6 @@ class Shell final : public PlatformView::Delegate,
       fml::WeakPtr<IOManager> io_manager,
       fml::RefPtr<SkiaUnrefQueue> unref_queue,
       fml::TaskRunnerAffineWeakPtr<SnapshotDelegate> snapshot_delegate,
-      std::shared_ptr<VolatilePathTracker> volatile_path_tracker,
       const std::shared_ptr<fml::SyncSwitch>& gpu_disabled_switch,
       impeller::RuntimeStageBackend runtime_stage_type)>
       EngineCreateCallback;
@@ -360,6 +359,17 @@ class Shell final : public PlatformView::Delegate,
   bool EngineHasLivePorts() const;
 
   //----------------------------------------------------------------------------
+  /// @brief      Used by embedders to check if the Engine is running and has
+  ///             any microtasks that have been queued but have not yet run.
+  ///             The Flutter tester uses this as a signal that a test is still
+  ///             running.
+  ///
+  /// @return     Returns if the shell has an engine and the engine has pending
+  ///             microtasks.
+  ///
+  bool EngineHasPendingMicrotasks() const;
+
+  //----------------------------------------------------------------------------
   /// @brief     Accessor for the disable GPU SyncSwitch.
   // |Rasterizer::Delegate|
   std::shared_ptr<const fml::SyncSwitch> GetIsGpuDisabledSyncSwitch()
@@ -450,7 +460,6 @@ class Shell final : public PlatformView::Delegate,
   std::unique_ptr<Rasterizer> rasterizer_;       // on raster task runner
   std::shared_ptr<ShellIOManager> io_manager_;   // on IO task runner
   std::shared_ptr<fml::SyncSwitch> is_gpu_disabled_sync_switch_;
-  std::shared_ptr<VolatilePathTracker> volatile_path_tracker_;
   std::shared_ptr<PlatformMessageHandler> platform_message_handler_;
   std::atomic<bool> route_messages_through_platform_thread_ = false;
 
@@ -503,6 +512,9 @@ class Shell final : public PlatformView::Delegate,
   // Used to communicate the right frame bounds via service protocol.
   double device_pixel_ratio_ = 0.0;
 
+  // Cached refresh rate used by the performance overlay.
+  std::optional<fml::Milliseconds> cached_display_refresh_rate_;
+
   // How many frames have been timed since last report.
   size_t UnreportedFramesCount() const;
 
@@ -512,7 +524,6 @@ class Shell final : public PlatformView::Delegate,
         const std::shared_ptr<ResourceCacheLimitCalculator>&
             resource_cache_limit_calculator,
         const Settings& settings,
-        std::shared_ptr<VolatilePathTracker> volatile_path_tracker,
         bool is_gpu_disabled);
 
   static std::unique_ptr<Shell> CreateShellOnPlatformThread(
@@ -751,15 +762,6 @@ class Shell final : public PlatformView::Delegate,
 
   // Service protocol handler
   bool OnServiceProtocolEstimateRasterCacheMemory(
-      const ServiceProtocol::Handler::ServiceProtocolMap& params,
-      rapidjson::Document* response);
-
-  // Service protocol handler
-  //
-  // Renders a frame and responds with various statistics pertaining to the
-  // raster call. These include time taken to raster every leaf layer and also
-  // leaf layer snapshots.
-  bool OnServiceProtocolRenderFrameWithRasterStats(
       const ServiceProtocol::Handler::ServiceProtocolMap& params,
       rapidjson::Document* response);
 

@@ -3,15 +3,21 @@
 // found in the LICENSE file.
 
 import 'dart:typed_data';
-import 'dart:ui' as ui;
+
+// ignore: avoid_relative_lib_imports
 import '../../lib/gpu/lib/gpu.dart' as gpu;
 
 void main() {}
 
 @pragma('vm:entry-point')
 void sayHi() {
+  // ignore: avoid_print
   print('Hi');
 }
+
+/// Pass a texture back to the playground for rendering to the surface.
+@pragma('vm:external-name', 'SetDisplayTexture')
+external void setDisplayTexture(gpu.Texture texture);
 
 @pragma('vm:entry-point')
 void instantiateDefaultContext() {
@@ -55,56 +61,14 @@ gpu.RenderPipeline createUnlitRenderPipeline() {
   return gpu.gpuContext.createRenderPipeline(vertex!, fragment!);
 }
 
-gpu.RenderPass createRenderPass() {
-  final gpu.Texture? renderTexture =
-      gpu.gpuContext.createTexture(gpu.StorageMode.devicePrivate, 100, 100);
-  assert(renderTexture != null);
-
-  final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
-
-  final gpu.RenderTarget renderTarget = gpu.RenderTarget.singleColor(
-    gpu.ColorAttachment(texture: renderTexture!),
-  );
-  return commandBuffer.createRenderPass(renderTarget);
-}
-
-@pragma('vm:entry-point')
-void uniformBindFailsForInvalidHostBufferOffset() {
-  final gpu.RenderPass encoder = createRenderPass();
-
-  final gpu.RenderPipeline pipeline = createUnlitRenderPipeline();
-  encoder.bindPipeline(pipeline);
-
-  final gpu.HostBuffer transients = gpu.gpuContext.createHostBuffer();
-  final gpu.BufferView vertInfoData = transients.emplace(float32(<double>[
-    1, 0, 0, 0, // mvp
-    0, 1, 0, 0, // mvp
-    0, 0, 1, 0, // mvp
-    0, 0, 0, 1, // mvp
-    0, 1, 0, 1, // color
-  ]));
-  final gpu.BufferView viewWithBadOffset = gpu.BufferView(vertInfoData.buffer,
-      offsetInBytes: 1, lengthInBytes: vertInfoData.lengthInBytes);
-
-  final gpu.UniformSlot vertInfo =
-      pipeline.vertexShader.getUniformSlot('VertInfo');
-  String? exception;
-  try {
-    encoder.bindUniform(vertInfo, viewWithBadOffset);
-  } catch (e) {
-    exception = e.toString();
-  }
-  assert(exception!.contains('Failed to bind uniform'));
-}
-
 ByteData float32(List<double> values) {
   return Float32List.fromList(values).buffer.asByteData();
 }
 
 @pragma('vm:entry-point')
-void canCreateRenderPassAndSubmit() {
-  final gpu.Texture? renderTexture =
-      gpu.gpuContext.createTexture(gpu.StorageMode.devicePrivate, 100, 100);
+void canCreateRenderPassAndSubmit(int width, int height) {
+  final gpu.Texture? renderTexture = gpu.gpuContext
+      .createTexture(gpu.StorageMode.devicePrivate, width, height);
   assert(renderTexture != null);
 
   final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
@@ -123,9 +87,9 @@ void canCreateRenderPassAndSubmit() {
 
   final gpu.HostBuffer transients = gpu.gpuContext.createHostBuffer();
   final gpu.BufferView vertices = transients.emplace(float32(<double>[
-    -0.5, -0.5, //
+    -0.5, 0.5, //
+    0.0, -0.5, //
     0.5, 0.5, //
-    0.5, -0.5, //
   ]));
   final gpu.BufferView vertInfoData = transients.emplace(float32(<double>[
     1, 0, 0, 0, // mvp
@@ -142,4 +106,6 @@ void canCreateRenderPassAndSubmit() {
   encoder.draw();
 
   commandBuffer.submit();
+
+  setDisplayTexture(renderTexture);
 }

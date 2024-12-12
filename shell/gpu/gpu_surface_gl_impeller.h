@@ -9,7 +9,7 @@
 #include "flutter/flow/surface.h"
 #include "flutter/fml/macros.h"
 #include "flutter/fml/memory/weak_ptr.h"
-#include "flutter/impeller/aiks/aiks_context.h"
+#include "flutter/impeller/display_list/aiks_context.h"
 #include "flutter/impeller/renderer/context.h"
 #include "flutter/shell/gpu/gpu_surface_gl_delegate.h"
 
@@ -31,7 +31,6 @@ class GPUSurfaceGLImpeller final : public Surface {
   GPUSurfaceGLDelegate* delegate_ = nullptr;
   std::shared_ptr<impeller::Context> impeller_context_;
   bool render_to_surface_ = true;
-  std::shared_ptr<impeller::Renderer> impeller_renderer_;
   std::shared_ptr<impeller::AiksContext> aiks_context_;
   bool is_valid_ = false;
   fml::TaskRunnerAffineWeakPtrFactory<GPUSurfaceGLImpeller> weak_factory_;

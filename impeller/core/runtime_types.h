@@ -6,6 +6,7 @@
 #define FLUTTER_IMPELLER_CORE_RUNTIME_TYPES_H_
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -16,6 +17,7 @@ enum class RuntimeStageBackend {
   kSkSL,
   kMetal,
   kOpenGLES,
+  kOpenGLES3,
   kVulkan,
 };
 
@@ -39,6 +41,8 @@ struct RuntimeUniformDimensions {
 struct RuntimeUniformDescription {
   std::string name;
   size_t location = 0u;
+  /// Location, but for Vulkan.
+  size_t binding = 0u;
   RuntimeUniformType type = RuntimeUniformType::kFloat;
   RuntimeUniformDimensions dimensions = {};
   size_t bit_width = 0u;

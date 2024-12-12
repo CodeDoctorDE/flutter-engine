@@ -3,22 +3,17 @@
 // found in the LICENSE file.
 
 #import "flutter/shell/platform/darwin/ios/framework/Source/FlutterView.h"
-#include <Metal/Metal.h>
 
-#include "flutter/common/settings.h"
-#include "flutter/common/task_runners.h"
-#include "flutter/flow/layers/layer_tree.h"
 #include "flutter/fml/platform/darwin/cf_utils.h"
-#include "flutter/fml/synchronization/waitable_event.h"
-#include "flutter/fml/trace_event.h"
-#include "flutter/shell/common/platform_view.h"
-#include "flutter/shell/common/rasterizer.h"
-#import "flutter/shell/platform/darwin/ios/framework/Source/FlutterViewController_Internal.h"
-#import "flutter/shell/platform/darwin/ios/ios_surface_software.h"
-#include "third_party/skia/include/utils/mac/SkCGUtils.h"
+#import "flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.h"
+
+FLUTTER_ASSERT_ARC
+
+@interface FlutterView ()
+@property(nonatomic, weak) id<FlutterViewEngineDelegate> delegate;
+@end
 
 @implementation FlutterView {
-  id<FlutterViewEngineDelegate> _delegate;
   BOOL _isWideGamutEnabled;
 }
 
@@ -45,7 +40,7 @@
 }
 
 - (MTLPixelFormat)pixelFormat {
-  if ([self.layer isKindOfClass:NSClassFromString(@"CAMetalLayer")]) {
+  if ([self.layer isKindOfClass:[CAMetalLayer class]]) {
 // It is a known Apple bug that CAMetalLayer incorrectly reports its supported
 // SDKs. It is, in fact, available since iOS 8.
 #pragma clang diagnostic push
@@ -56,7 +51,7 @@
   return MTLPixelFormatBGRA8Unorm;
 }
 - (BOOL)isWideGamutSupported {
-  if (![_delegate isUsingImpeller]) {
+  if (!self.delegate.isUsingImpeller) {
     return NO;
   }
 
@@ -73,7 +68,6 @@
                  enableWideGamut:(BOOL)isWideGamutEnabled {
   if (delegate == nil) {
     NSLog(@"FlutterView delegate was nil.");
-    [self release];
     return nil;
   }
 
@@ -83,12 +77,6 @@
     _delegate = delegate;
     _isWideGamutEnabled = isWideGamutEnabled;
     self.layer.opaque = opaque;
-
-    // This line is necessary. CoreAnimation(or UIKit) may take this to do
-    // something to compute the final frame presented on screen, if we don't set this,
-    // it will make it take long time for us to take next CAMetalDrawable and will
-    // cause constant junk during rendering.
-    self.backgroundColor = UIColor.clearColor;
   }
 
   return self;
@@ -105,7 +93,7 @@ static void PrintWideGamutWarningOnce() {
 }
 
 - (void)layoutSubviews {
-  if ([self.layer isKindOfClass:NSClassFromString(@"CAMetalLayer")]) {
+  if ([self.layer isKindOfClass:[CAMetalLayer class]]) {
 // It is a known Apple bug that CAMetalLayer incorrectly reports its supported
 // SDKs. It is, in fact, available since iOS 8.
 #pragma clang diagnostic push
@@ -119,9 +107,8 @@ static void PrintWideGamutWarningOnce() {
     layer.framebufferOnly = flutter::Settings::kSurfaceDataAccessible ? NO : YES;
     BOOL isWideGamutSupported = self.isWideGamutSupported;
     if (_isWideGamutEnabled && isWideGamutSupported) {
-      CGColorSpaceRef srgb = CGColorSpaceCreateWithName(kCGColorSpaceExtendedSRGB);
+      fml::CFRef<CGColorSpaceRef> srgb(CGColorSpaceCreateWithName(kCGColorSpaceExtendedSRGB));
       layer.colorspace = srgb;
-      CFRelease(srgb);
       layer.pixelFormat = MTLPixelFormatBGRA10_XR;
     } else if (_isWideGamutEnabled && !isWideGamutSupported) {
       PrintWideGamutWarningOnce();
@@ -235,8 +222,34 @@ static BOOL _forceSoftwareRendering;
   // TODO(chunhtai): Remove this workaround once iOS provides an
   // API to query whether voice control is enabled.
   // https://github.com/flutter/flutter/issues/76808.
-  [_delegate flutterViewAccessibilityDidCall];
+  [self.delegate flutterViewAccessibilityDidCall];
   return NO;
+}
+
+// Enables keyboard-based navigation when the user turns on
+// full keyboard access (FKA), using existing accessibility information.
+//
+// iOS does not provide any API for monitoring or querying whether FKA is on,
+// but it does call isAccessibilityElement if FKA is on,
+// so the isAccessibilityElement implementation above will be called
+// when the view appears and the accessibility information will most likely
+// be available by the time the user starts to interact with the app using FKA.
+//
+// See SemanticsObject+UIFocusSystem.mm for more details.
+- (NSArray<id<UIFocusItem>>*)focusItemsInRect:(CGRect)rect {
+  NSObject* rootAccessibilityElement =
+      [self.accessibilityElements count] > 0 ? self.accessibilityElements[0] : nil;
+  return [rootAccessibilityElement isKindOfClass:[SemanticsObjectContainer class]]
+             ? @[ [rootAccessibilityElement accessibilityElementAtIndex:0] ]
+             : nil;
+}
+
+- (NSArray<id<UIFocusEnvironment>>*)preferredFocusEnvironments {
+  // Occasionally we add subviews to FlutterView (text fields for example).
+  // These views shouldn't be directly visible to the iOS focus engine, instead
+  // the focus engine should only interact with the designated focus items
+  // (SemanticsObjects).
+  return nil;
 }
 
 @end

@@ -11,11 +11,9 @@
 #include "flutter/impeller/toolkit/egl/surface.h"
 #include "impeller/entity/gles/entity_shaders_gles.h"
 #include "impeller/entity/gles/framebuffer_blend_shaders_gles.h"
+#include "impeller/entity/gles3/entity_shaders_gles.h"
+#include "impeller/entity/gles3/framebuffer_blend_shaders_gles.h"
 
-#if IMPELLER_ENABLE_3D
-// This include was turned to an error since it breaks GN.
-#include "impeller/scene/shaders/gles/scene_shaders_gles.h"  // nogncheck
-#endif  // IMPELLER_ENABLE_3D
 namespace flutter {
 
 class AndroidContextGLImpeller::ReactorWorker final
@@ -59,22 +57,31 @@ static std::shared_ptr<impeller::Context> CreateImpellerContext(
     FML_LOG(ERROR) << "Could not create OpenGL proc table.";
     return nullptr;
   }
+  bool is_gles3 = proc_table->GetDescription()->GetGlVersion().IsAtLeast(
+      impeller::Version{3, 0, 0});
 
-  std::vector<std::shared_ptr<fml::Mapping>> shader_mappings = {
+  std::vector<std::shared_ptr<fml::Mapping>> gles2_shader_mappings = {
       std::make_shared<fml::NonOwnedMapping>(
           impeller_entity_shaders_gles_data,
           impeller_entity_shaders_gles_length),
       std::make_shared<fml::NonOwnedMapping>(
           impeller_framebuffer_blend_shaders_gles_data,
           impeller_framebuffer_blend_shaders_gles_length),
-#if IMPELLER_ENABLE_3D
+  };
+
+  std::vector<std::shared_ptr<fml::Mapping>> gles3_shader_mappings = {
       std::make_shared<fml::NonOwnedMapping>(
-          impeller_scene_shaders_gles_data, impeller_scene_shaders_gles_length),
-#endif  // IMPELLER_ENABLE_3D
+          impeller_entity_shaders_gles3_data,
+          impeller_entity_shaders_gles3_length),
+      std::make_shared<fml::NonOwnedMapping>(
+          impeller_framebuffer_blend_shaders_gles3_data,
+          impeller_framebuffer_blend_shaders_gles3_length),
   };
 
   auto context = impeller::ContextGLES::Create(
-      std::move(proc_table), shader_mappings, enable_gpu_tracing);
+      std::move(proc_table),
+      is_gles3 ? gles3_shader_mappings : gles2_shader_mappings,
+      enable_gpu_tracing);
   if (!context) {
     FML_LOG(ERROR) << "Could not create OpenGLES Impeller Context.";
     return nullptr;
@@ -100,15 +107,21 @@ AndroidContextGLImpeller::AndroidContextGLImpeller(
   }
 
   impeller::egl::ConfigDescriptor desc;
-  desc.api = impeller::egl::API::kOpenGLES2;
+  desc.api = impeller::egl::API::kOpenGLES3;
   desc.color_format = impeller::egl::ColorFormat::kRGBA8888;
-  desc.depth_bits = impeller::egl::DepthBits::kZero;
+  desc.depth_bits = impeller::egl::DepthBits::kTwentyFour;
   desc.stencil_bits = impeller::egl::StencilBits::kEight;
   desc.samples = impeller::egl::Samples::kFour;
 
   desc.surface_type = impeller::egl::SurfaceType::kWindow;
   std::unique_ptr<impeller::egl::Config> onscreen_config =
       display_->ChooseConfig(desc);
+
+  if (!onscreen_config) {
+    desc.api = impeller::egl::API::kOpenGLES2;
+    onscreen_config = display_->ChooseConfig(desc);
+  }
+
   if (!onscreen_config) {
     // Fallback for Android emulator.
     desc.samples = impeller::egl::Samples::kOne;

@@ -8,6 +8,8 @@
 #include <Carbon/Carbon.h>
 #import <objc/message.h>
 
+#include "flutter/common/constants.h"
+#include "flutter/fml/platform/darwin/cf_utils.h"
 #import "flutter/shell/platform/darwin/common/framework/Headers/FlutterChannels.h"
 #import "flutter/shell/platform/darwin/common/framework/Headers/FlutterCodecs.h"
 #import "flutter/shell/platform/darwin/macos/framework/Headers/FlutterEngine.h"
@@ -17,7 +19,7 @@
 #import "flutter/shell/platform/darwin/macos/framework/Source/FlutterRenderer.h"
 #import "flutter/shell/platform/darwin/macos/framework/Source/FlutterTextInputSemanticsObject.h"
 #import "flutter/shell/platform/darwin/macos/framework/Source/FlutterView.h"
-#import "flutter/shell/platform/embedder/embedder.h"
+#include "flutter/shell/platform/embedder/embedder.h"
 
 #pragma mark - Static types and data.
 
@@ -129,7 +131,6 @@ struct MouseState {
     flutter_state_is_down = false;
     has_pending_exit = false;
     buttons = 0;
-    GestureReset();
   }
 };
 
@@ -285,32 +286,44 @@ static void OnKeyboardLayoutChanged(CFNotificationCenterRef center,
   return @[ _flutterView ];
 }
 
+// TODO(cbracken): https://github.com/flutter/flutter/issues/154063
+// Remove this whole method override when we drop support for macOS 12 (Monterey).
 - (void)mouseDown:(NSEvent*)event {
-  // Work around an AppKit bug where mouseDown/mouseUp are not called on the view controller if the
-  // view is the content view of an NSPopover AND macOS's Reduced Transparency accessibility setting
-  // is enabled.
-  //
-  // This simply calls mouseDown on the next responder in the responder chain as the default
-  // implementation on NSResponder is documented to do.
-  //
-  // See: https://github.com/flutter/flutter/issues/115015
-  // See: http://www.openradar.me/FB12050037
-  // See: https://developer.apple.com/documentation/appkit/nsresponder/1524634-mousedown
-  [self.nextResponder mouseDown:event];
+  if (@available(macOS 13.3.1, *)) {
+    [super mouseDown:event];
+  } else {
+    // Work around an AppKit bug where mouseDown/mouseUp are not called on the view controller if
+    // the view is the content view of an NSPopover AND macOS's Reduced Transparency accessibility
+    // setting is enabled.
+    //
+    // This simply calls mouseDown on the next responder in the responder chain as the default
+    // implementation on NSResponder is documented to do.
+    //
+    // See: https://github.com/flutter/flutter/issues/115015
+    // See: http://www.openradar.me/FB12050037
+    // See: https://developer.apple.com/documentation/appkit/nsresponder/1524634-mousedown
+    [self.nextResponder mouseDown:event];
+  }
 }
 
+// TODO(cbracken): https://github.com/flutter/flutter/issues/154063
+// Remove this workaround when we drop support for macOS 12 (Monterey).
 - (void)mouseUp:(NSEvent*)event {
-  // Work around an AppKit bug where mouseDown/mouseUp are not called on the view controller if the
-  // view is the content view of an NSPopover AND macOS's Reduced Transparency accessibility setting
-  // is enabled.
-  //
-  // This simply calls mouseUp on the next responder in the responder chain as the default
-  // implementation on NSResponder is documented to do.
-  //
-  // See: https://github.com/flutter/flutter/issues/115015
-  // See: http://www.openradar.me/FB12050037
-  // See: https://developer.apple.com/documentation/appkit/nsresponder/1535349-mouseup
-  [self.nextResponder mouseUp:event];
+  if (@available(macOS 13.3.1, *)) {
+    [super mouseUp:event];
+  } else {
+    // Work around an AppKit bug where mouseDown/mouseUp are not called on the view controller if
+    // the view is the content view of an NSPopover AND macOS's Reduced Transparency accessibility
+    // setting is enabled.
+    //
+    // This simply calls mouseUp on the next responder in the responder chain as the default
+    // implementation on NSResponder is documented to do.
+    //
+    // See: https://github.com/flutter/flutter/issues/115015
+    // See: http://www.openradar.me/FB12050037
+    // See: https://developer.apple.com/documentation/appkit/nsresponder/1535349-mouseup
+    [self.nextResponder mouseUp:event];
+  }
 }
 
 @end
@@ -323,14 +336,14 @@ static void OnKeyboardLayoutChanged(CFNotificationCenterRef center,
 
   std::shared_ptr<flutter::AccessibilityBridgeMac> _bridge;
 
-  FlutterViewId _id;
-
   // FlutterViewController does not actually uses the synchronizer, but only
   // passes it to FlutterView.
   FlutterThreadSynchronizer* _threadSynchronizer;
 }
 
-@synthesize viewId = _viewId;
+// Synthesize properties declared readonly.
+@synthesize viewIdentifier = _viewIdentifier;
+
 @dynamic accessibilityBridge;
 
 /**
@@ -351,7 +364,7 @@ static void CommonInit(FlutterViewController* controller, FlutterEngine* engine)
             @"The FlutterViewController unexpectedly stays unattached after initialization. "
             @"In unit tests, this is likely because either the FlutterViewController or "
             @"the FlutterEngine is mocked. Please subclass these classes instead.",
-            controller.engine, controller.viewId);
+            controller.engine, controller.viewIdentifier);
   controller->_mouseTrackingMode = kFlutterMouseTrackingModeInKeyWindow;
   controller->_textInputPlugin = [[FlutterTextInputPlugin alloc] initWithViewController:controller];
   [controller initializeKeyboard];
@@ -469,9 +482,9 @@ static void CommonInit(FlutterViewController* controller, FlutterEngine* engine)
   [_flutterView setBackgroundColor:_backgroundColor];
 }
 
-- (FlutterViewId)viewId {
+- (FlutterViewIdentifier)viewIdentifier {
   NSAssert([self attached], @"This view controller is not attached.");
-  return _viewId;
+  return _viewIdentifier;
 }
 
 - (void)onPreEngineRestart {
@@ -499,18 +512,18 @@ static void CommonInit(FlutterViewController* controller, FlutterEngine* engine)
 }
 
 - (void)setUpWithEngine:(FlutterEngine*)engine
-                 viewId:(FlutterViewId)viewId
+         viewIdentifier:(FlutterViewIdentifier)viewIdentifier
      threadSynchronizer:(FlutterThreadSynchronizer*)threadSynchronizer {
   NSAssert(_engine == nil, @"Already attached to an engine %@.", _engine);
   _engine = engine;
-  _viewId = viewId;
+  _viewIdentifier = viewIdentifier;
   _threadSynchronizer = threadSynchronizer;
-  [_threadSynchronizer registerView:_viewId];
+  [_threadSynchronizer registerView:_viewIdentifier];
 }
 
 - (void)detachFromEngine {
   NSAssert(_engine != nil, @"Not attached to any engine.");
-  [_threadSynchronizer deregisterView:_viewId];
+  [_threadSynchronizer deregisterView:_viewIdentifier];
   _threadSynchronizer = nil;
   _engine = nil;
 }
@@ -520,7 +533,8 @@ static void CommonInit(FlutterViewController* controller, FlutterEngine* engine)
 }
 
 - (void)updateSemantics:(const FlutterSemanticsUpdate2*)update {
-  NSAssert(_engine.semanticsEnabled, @"Semantics must be enabled.");
+  // Semantics will be disabled when unfocusing application but the updateSemantics:
+  // callback is received in next run loop turn.
   if (!_engine.semanticsEnabled) {
     return;
   }
@@ -743,7 +757,7 @@ static void CommonInit(FlutterViewController* controller, FlutterEngine* engine)
       .device_kind = deviceKind,
       // If a click triggered a synthesized kAdd, don't pass the buttons in that event.
       .buttons = phase == kAdd ? 0 : _mouseState.buttons,
-      .view_id = static_cast<FlutterViewId>(_viewId),
+      .view_id = static_cast<FlutterViewIdentifier>(_viewIdentifier),
   };
 
   if (phase == kPanZoomUpdate) {
@@ -834,7 +848,7 @@ static void CommonInit(FlutterViewController* controller, FlutterEngine* engine)
                                    commandQueue:commandQueue
                                        delegate:self
                              threadSynchronizer:_threadSynchronizer
-                                         viewId:_viewId];
+                                 viewIdentifier:_viewIdentifier];
 }
 
 - (void)onKeyboardLayoutChanged {
@@ -890,17 +904,16 @@ static void CommonInit(FlutterViewController* controller, FlutterEngine* engine)
  * It's returned in NSData* to enable auto reference count.
  */
 static NSData* CurrentKeyboardLayoutData() {
-  TISInputSourceRef source = TISCopyCurrentKeyboardInputSource();
+  fml::CFRef<TISInputSourceRef> source(TISCopyCurrentKeyboardInputSource());
   CFTypeRef layout_data = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData);
   if (layout_data == nil) {
-    CFRelease(source);
     // TISGetInputSourceProperty returns null with Japanese keyboard layout.
     // Using TISCopyCurrentKeyboardLayoutInputSource to fix NULL return.
     // https://github.com/microsoft/node-native-keymap/blob/5f0699ded00179410a14c0e1b0e089fe4df8e130/src/keyboard_mac.mm#L91
-    source = TISCopyCurrentKeyboardLayoutInputSource();
+    source.Reset(TISCopyCurrentKeyboardLayoutInputSource());
     layout_data = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData);
   }
-  return (__bridge_transfer NSData*)CFRetain(layout_data);
+  return (__bridge NSData*)layout_data;
 }
 
 - (void)sendKeyEvent:(const FlutterKeyEvent&)event
@@ -1071,7 +1084,7 @@ static NSData* CurrentKeyboardLayoutData() {
           .device = kPointerPanZoomDeviceId,
           .signal_kind = kFlutterPointerSignalKindScrollInertiaCancel,
           .device_kind = kFlutterPointerDeviceKindTrackpad,
-          .view_id = static_cast<FlutterViewId>(_viewId),
+          .view_id = static_cast<FlutterViewIdentifier>(_viewIdentifier),
       };
 
       [_engine sendPointerEvent:flutterEvent];

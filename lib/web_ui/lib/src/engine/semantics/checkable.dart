@@ -48,14 +48,17 @@ _CheckableKind _checkableKindFromSemanticsFlag(
 ///
 /// See also [ui.SemanticsFlag.hasCheckedState], [ui.SemanticsFlag.isChecked],
 /// [ui.SemanticsFlag.isInMutuallyExclusiveGroup], [ui.SemanticsFlag.isToggled],
-/// [ui.SemanticsFlag.hasToggledState]
-class Checkable extends PrimaryRoleManager {
-  Checkable(SemanticsObject semanticsObject)
+/// [ui.SemanticsFlag.hasToggledState].
+///
+/// See also [Selectable] behavior, which expresses a similar but different
+/// boolean state of being "selected".
+class SemanticCheckable extends SemanticRole {
+  SemanticCheckable(SemanticsObject semanticsObject)
       : _kind = _checkableKindFromSemanticsFlag(semanticsObject),
         super.withBasics(
-          PrimaryRole.checkable,
+          SemanticRoleKind.checkable,
           semanticsObject,
-          labelRepresentation: LeafLabelRepresentation.ariaLabel,
+          preferredLabelRepresentation: LabelRepresentation.ariaLabel,
         ) {
     addTappable();
   }
@@ -112,4 +115,29 @@ class Checkable extends PrimaryRoleManager {
 
   @override
   bool focusAsRouteDefault() => focusable?.focusAsRouteDefault() ?? false;
+}
+
+/// Adds selectability behavior to a semantic node.
+///
+/// A selectable node would have the `aria-selected` set to "true" if the node
+/// is currently selected (i.e. [SemanticsObject.isSelected] is true), and set
+/// to "false" if it's not selected (i.e. [SemanticsObject.isSelected] is
+/// false). If the node is not selectable (i.e. [SemanticsObject.isSelectable]
+/// is false), then `aria-selected` is unset.
+///
+/// See also [SemanticCheckable], which expresses a similar but different
+/// boolean state of being "checked" or "toggled".
+class Selectable extends SemanticBehavior {
+  Selectable(super.semanticsObject, super.owner);
+
+  @override
+  void update() {
+    if (semanticsObject.isFlagsDirty) {
+      if (semanticsObject.isSelectable) {
+        owner.setAttribute('aria-selected', semanticsObject.isSelected);
+      } else {
+        owner.removeAttribute('aria-selected');
+      }
+    }
+  }
 }

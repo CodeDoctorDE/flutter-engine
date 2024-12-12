@@ -19,18 +19,14 @@
 #include "flutter/lib/ui/semantics/semantics_node.h"
 #include "flutter/lib/ui/snapshot_delegate.h"
 #include "flutter/lib/ui/text/font_collection.h"
-#include "flutter/lib/ui/volatile_path_tracker.h"
 #include "flutter/lib/ui/window/platform_message.h"
 #include "flutter/lib/ui/window/viewport_metrics.h"
 #include "flutter/runtime/dart_vm.h"
 #include "flutter/runtime/runtime_controller.h"
 #include "flutter/runtime/runtime_delegate.h"
 #include "flutter/shell/common/animator.h"
-#include "flutter/shell/common/display_manager.h"
-#include "flutter/shell/common/platform_view.h"
 #include "flutter/shell/common/pointer_data_dispatcher.h"
 #include "flutter/shell/common/run_configuration.h"
-#include "flutter/shell/common/shell_io_manager.h"
 
 namespace flutter {
 
@@ -399,7 +395,6 @@ class Engine final : public RuntimeDelegate, PointerDataDispatcher::Delegate {
          fml::WeakPtr<IOManager> io_manager,
          const fml::RefPtr<SkiaUnrefQueue>& unref_queue,
          fml::TaskRunnerAffineWeakPtr<SnapshotDelegate> snapshot_delegate,
-         std::shared_ptr<VolatilePathTracker> volatile_path_tracker,
          const std::shared_ptr<fml::SyncSwitch>& gpu_disabled_switch,
          impeller::RuntimeStageBackend runtime_stage_type =
              impeller::RuntimeStageBackend::kSkSL);
@@ -683,6 +678,15 @@ class Engine final : public RuntimeDelegate, PointerDataDispatcher::Delegate {
   /// @return     Check if the root isolate has any live ports.
   ///
   bool UIIsolateHasLivePorts();
+
+  /// @brief      Another signal of liveness is the presence of microtasks that
+  ///             have been queued by the application but have not yet been
+  ///             executed.  Embedders may want to check for pending microtasks
+  ///             and ensure that the microtask queue has been drained before
+  ///             the embedder terminates.
+  ///
+  /// @return     Check if the root isolate has any pending microtasks.
+  bool UIIsolateHasPendingMicrotasks();
 
   //----------------------------------------------------------------------------
   /// @brief      Errors that are unhandled on the Dart message loop are kept
@@ -1048,6 +1052,7 @@ class Engine final : public RuntimeDelegate, PointerDataDispatcher::Delegate {
   std::string initial_route_;
   std::shared_ptr<AssetManager> asset_manager_;
   std::shared_ptr<FontCollection> font_collection_;
+  std::shared_ptr<NativeAssetsManager> native_assets_manager_;
   const std::unique_ptr<ImageDecoder> image_decoder_;
   ImageGeneratorRegistry image_generator_registry_;
   TaskRunners task_runners_;

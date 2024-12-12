@@ -32,6 +32,8 @@ class SemanticsAction {
   static const int _kMoveCursorForwardByWordIndex = 1 << 19;
   static const int _kMoveCursorBackwardByWordIndex = 1 << 20;
   static const int _kSetTextIndex = 1 << 21;
+  static const int _kFocusIndex = 1 << 22;
+  static const int _kScrollToOffsetIndex = 1 << 23;
 
   static const SemanticsAction tap = SemanticsAction._(_kTapIndex, 'tap');
   static const SemanticsAction longPress = SemanticsAction._(_kLongPressIndex, 'longPress');
@@ -39,6 +41,7 @@ class SemanticsAction {
   static const SemanticsAction scrollRight = SemanticsAction._(_kScrollRightIndex, 'scrollRight');
   static const SemanticsAction scrollUp = SemanticsAction._(_kScrollUpIndex, 'scrollUp');
   static const SemanticsAction scrollDown = SemanticsAction._(_kScrollDownIndex, 'scrollDown');
+  static const SemanticsAction scrollToOffset = SemanticsAction._(_kScrollToOffsetIndex, 'scrollToOffset');
   static const SemanticsAction increase = SemanticsAction._(_kIncreaseIndex, 'increase');
   static const SemanticsAction decrease = SemanticsAction._(_kDecreaseIndex, 'decrease');
   static const SemanticsAction showOnScreen = SemanticsAction._(_kShowOnScreenIndex, 'showOnScreen');
@@ -55,6 +58,7 @@ class SemanticsAction {
   static const SemanticsAction dismiss = SemanticsAction._(_kDismissIndex, 'dismiss');
   static const SemanticsAction moveCursorForwardByWord = SemanticsAction._(_kMoveCursorForwardByWordIndex, 'moveCursorForwardByWord');
   static const SemanticsAction moveCursorBackwardByWord = SemanticsAction._(_kMoveCursorBackwardByWordIndex, 'moveCursorBackwardByWord');
+  static const SemanticsAction focus = SemanticsAction._(_kFocusIndex, 'focus');
 
   static const Map<int, SemanticsAction> _kActionById = <int, SemanticsAction>{
     _kTapIndex: tap,
@@ -63,6 +67,7 @@ class SemanticsAction {
     _kScrollRightIndex: scrollRight,
     _kScrollUpIndex: scrollUp,
     _kScrollDownIndex: scrollDown,
+    _kScrollToOffsetIndex: scrollToOffset,
     _kIncreaseIndex: increase,
     _kDecreaseIndex: decrease,
     _kShowOnScreenIndex: showOnScreen,
@@ -79,6 +84,7 @@ class SemanticsAction {
     _kMoveCursorForwardByWordIndex: moveCursorForwardByWord,
     _kMoveCursorBackwardByWordIndex: moveCursorBackwardByWord,
     _kSetTextIndex: setText,
+    _kFocusIndex: focus,
   };
 
   static List<SemanticsAction> get values => _kActionById.values.toList(growable: false);
@@ -123,9 +129,11 @@ class SemanticsFlag {
   static const int _kIsCheckStateMixedIndex = 1 << 25;
   static const int _kHasExpandedStateIndex = 1 << 26;
   static const int _kIsExpandedIndex = 1 << 27;
+  static const int _kHasSelectedStateIndex = 1 << 28;
 
   static const SemanticsFlag hasCheckedState = SemanticsFlag._(_kHasCheckedStateIndex, 'hasCheckedState');
   static const SemanticsFlag isChecked = SemanticsFlag._(_kIsCheckedIndex, 'isChecked');
+  static const SemanticsFlag hasSelectedState = SemanticsFlag._(_kHasSelectedStateIndex, 'hasSelectedState');
   static const SemanticsFlag isSelected = SemanticsFlag._(_kIsSelectedIndex, 'isSelected');
   static const SemanticsFlag isButton = SemanticsFlag._(_kIsButtonIndex, 'isButton');
   static const SemanticsFlag isTextField = SemanticsFlag._(_kIsTextFieldIndex, 'isTextField');
@@ -156,6 +164,7 @@ class SemanticsFlag {
   static const Map<int, SemanticsFlag> _kFlagById = <int, SemanticsFlag>{
     _kHasCheckedStateIndex: hasCheckedState,
     _kIsCheckedIndex: isChecked,
+    _kHasSelectedStateIndex: hasSelectedState,
     _kIsSelectedIndex: isSelected,
     _kIsButtonIndex: isButton,
     _kIsTextFieldIndex: isTextField,
@@ -283,6 +292,8 @@ class SemanticsUpdateBuilder {
     required Int32List childrenInTraversalOrder,
     required Int32List childrenInHitTestOrder,
     required Int32List additionalActions,
+    int headingLevel = 0,
+    String? linkUrl,
   }) {
     if (transform.length != 16) {
       throw ArgumentError('transform argument must have 16 entries.');
@@ -321,6 +332,8 @@ class SemanticsUpdateBuilder {
       childrenInHitTestOrder: childrenInHitTestOrder,
       additionalActions: additionalActions,
       platformViewId: platformViewId,
+      headingLevel: headingLevel,
+      linkUrl: linkUrl,
     ));
   }
 

@@ -112,7 +112,7 @@ class DlVertices {
     Builder(DlVertexMode mode, int vertex_count, Flags flags, int index_count);
 
     /// Returns true iff the underlying object was successfully allocated.
-    bool is_valid() { return vertices_ != nullptr; }
+    bool is_valid() const { return vertices_ != nullptr; }
 
     /// @brief Copies the indicated list of points as vertices.
     ///
@@ -147,15 +147,16 @@ class DlVertices {
     ///
     /// fails if colors have already been supplied or if they were not
     /// promised by the flags.has_colors.
-    void store_colors(const uint32_t colors[]) {
-      store_colors(reinterpret_cast<const DlColor*>(colors));
-    }
+    void store_colors(const uint32_t colors[]);
 
     /// @brief Copies the indicated list of 16-bit indices as vertex indices.
     ///
     /// fails if indices have already been supplied or if they were not
     /// promised by (index_count > 0).
     void store_indices(const uint16_t indices[]);
+
+    /// @brief Overwrite the internal bounds with a precomputed bounding rect.
+    void store_bounds(DlRect bounds);
 
     /// @brief Finalizes and the constructed DlVertices object.
     ///
@@ -169,6 +170,7 @@ class DlVertices {
     bool needs_texture_coords_;
     bool needs_colors_;
     bool needs_indices_;
+    bool needs_bounds_ = true;
   };
 
   //--------------------------------------------------------------------------
@@ -185,7 +187,8 @@ class DlVertices {
                                           const SkPoint texture_coordinates[],
                                           const DlColor colors[],
                                           int index_count = 0,
-                                          const uint16_t indices[] = nullptr);
+                                          const uint16_t indices[] = nullptr,
+                                          const DlRect* bounds = nullptr);
 
   /// Returns the size of the object including all of the inlined data.
   size_t size() const;

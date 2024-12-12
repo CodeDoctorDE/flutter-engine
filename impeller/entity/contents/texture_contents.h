@@ -5,14 +5,10 @@
 #ifndef FLUTTER_IMPELLER_ENTITY_CONTENTS_TEXTURE_CONTENTS_H_
 #define FLUTTER_IMPELLER_ENTITY_CONTENTS_TEXTURE_CONTENTS_H_
 
-#include <functional>
 #include <memory>
-#include <vector>
 
-#include "flutter/fml/macros.h"
 #include "impeller/core/sampler_descriptor.h"
 #include "impeller/entity/contents/contents.h"
-#include "impeller/geometry/path.h"
 
 namespace impeller {
 
@@ -29,7 +25,7 @@ class TextureContents final : public Contents {
   ///         when image filters are applied.
   static std::shared_ptr<TextureContents> MakeRect(Rect destination);
 
-  void SetLabel(std::string label);
+  void SetLabel(std::string_view label);
 
   void SetDestinationRect(Rect rect);
 
@@ -72,9 +68,6 @@ class TextureContents final : public Contents {
   bool Render(const ContentContext& renderer,
               const Entity& entity,
               RenderPass& pass) const override;
-
-  // |Contents|
-  bool CanInheritOpacity(const Entity& entity) const override;
 
   // |Contents|
   void SetInheritedOpacity(Scalar opacity) override;

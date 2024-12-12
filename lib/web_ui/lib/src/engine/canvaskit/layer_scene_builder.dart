@@ -110,6 +110,7 @@ class LayerSceneBuilder implements ui.SceneBuilder {
     ui.ImageFilter filter, {
     ui.BlendMode blendMode = ui.BlendMode.srcOver,
     ui.EngineLayer? oldLayer,
+    int? backdropId,
   }) {
     return pushLayer<BackdropFilterEngineLayer>(BackdropFilterEngineLayer(
       filter,
@@ -201,21 +202,6 @@ class LayerSceneBuilder implements ui.SceneBuilder {
   }) {
     final Matrix4 matrix = Matrix4.fromFloat32List(toMatrix32(matrix4));
     return pushLayer<TransformEngineLayer>(TransformEngineLayer(matrix));
-  }
-
-  @override
-  void setCheckerboardOffscreenLayers(bool checkerboard) {
-    // TODO(hterkelsen): implement setCheckerboardOffscreenLayers
-  }
-
-  @override
-  void setCheckerboardRasterCacheImages(bool checkerboard) {
-    // TODO(hterkelsen): implement setCheckerboardRasterCacheImages
-  }
-
-  @override
-  void setRasterizerTracingThreshold(int frameInterval) {
-    // TODO(hterkelsen): implement setRasterizerTracingThreshold
   }
 
   T pushLayer<T extends ContainerLayer>(T layer) {

@@ -5,11 +5,9 @@
 #define FML_USED_ON_EMBEDDER
 
 #include <algorithm>
-#include <chrono>
 #include <ctime>
 #include <future>
 #include <memory>
-#include <strstream>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -21,6 +19,7 @@
 #include "assets/asset_resolver.h"
 #include "assets/directory_asset_bundle.h"
 #include "common/graphics/persistent_cache.h"
+#include "flutter/display_list/effects/dl_image_filter.h"
 #include "flutter/flow/layers/backdrop_filter_layer.h"
 #include "flutter/flow/layers/clip_rect_layer.h"
 #include "flutter/flow/layers/display_list_layer.h"
@@ -29,7 +28,6 @@
 #include "flutter/flow/layers/transform_layer.h"
 #include "flutter/fml/backtrace.h"
 #include "flutter/fml/command_line.h"
-#include "flutter/fml/make_copyable.h"
 #include "flutter/fml/message_loop.h"
 #include "flutter/fml/synchronization/count_down_latch.h"
 #include "flutter/fml/synchronization/waitable_event.h"
@@ -44,10 +42,11 @@
 #include "flutter/shell/common/vsync_waiter_fallback.h"
 #include "flutter/shell/common/vsync_waiters_test.h"
 #include "flutter/shell/version/version.h"
-#include "flutter/testing/mock_canvas.h"
 #include "flutter/testing/testing.h"
+#include "fml/mapping.h"
 #include "gmock/gmock.h"
 #include "impeller/core/runtime_types.h"
+#include "lib/ui/semantics/semantics_node.h"
 #include "third_party/rapidjson/include/rapidjson/writer.h"
 #include "third_party/skia/include/codec/SkCodecAnimation.h"
 #include "third_party/tonic/converter/dart_converter.h"
@@ -68,6 +67,33 @@ using ::testing::_;
 using ::testing::Return;
 
 namespace {
+
+std::unique_ptr<PlatformMessage> MakePlatformMessage(
+    const std::string& channel,
+    const std::map<std::string, std::string>& values,
+    const fml::RefPtr<PlatformMessageResponse>& response) {
+  rapidjson::Document document;
+  auto& allocator = document.GetAllocator();
+  document.SetObject();
+
+  for (const auto& pair : values) {
+    rapidjson::Value key(pair.first.c_str(), strlen(pair.first.c_str()),
+                         allocator);
+    rapidjson::Value value(pair.second.c_str(), strlen(pair.second.c_str()),
+                           allocator);
+    document.AddMember(key, value, allocator);
+  }
+
+  rapidjson::StringBuffer buffer;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+  document.Accept(writer);
+  const uint8_t* data = reinterpret_cast<const uint8_t*>(buffer.GetString());
+
+  std::unique_ptr<PlatformMessage> message = std::make_unique<PlatformMessage>(
+      channel, fml::MallocMapping::Copy(data, buffer.GetSize()), response);
+  return message;
+}
+
 class MockPlatformViewDelegate : public PlatformView::Delegate {
   MOCK_METHOD(void,
               OnPlatformViewCreated,
@@ -288,7 +314,8 @@ class ThreadCheckingAssetResolver : public AssetResolver {
   // |AssetResolver|
   std::unique_ptr<fml::Mapping> GetAsMapping(
       const std::string& asset_name) const override {
-    if (asset_name == "FontManifest.json") {
+    if (asset_name == "FontManifest.json" ||
+        asset_name == "NativeAssetsManifest.json") {
       // This file is loaded directly by the engine.
       return nullptr;
     }
@@ -473,13 +500,13 @@ TEST_F(ShellTest,
         // vsync mechanism. We should have better DI in the tests.
         const auto vsync_clock = std::make_shared<ShellTestVsyncClock>();
         return ShellTestPlatformView::Create(
-            shell, shell.GetTaskRunners(), vsync_clock,
+            ShellTestPlatformView::DefaultBackendType(), shell,
+            shell.GetTaskRunners(), vsync_clock,
             [task_runners = shell.GetTaskRunners()]() {
               return static_cast<std::unique_ptr<VsyncWaiter>>(
                   std::make_unique<VsyncWaiterFallback>(task_runners));
             },
-            ShellTestPlatformView::BackendType::kDefaultBackend, nullptr,
-            shell.GetIsGpuDisabledSyncSwitch());
+            nullptr, shell.GetIsGpuDisabledSyncSwitch());
       },
       [](Shell& shell) { return std::make_unique<Rasterizer>(shell); });
   ASSERT_TRUE(ValidateShell(shell.get()));
@@ -962,7 +989,7 @@ TEST_F(ShellTest, PushBackdropFilterToVisitedPlatformViews) {
     auto clip_rect_layer = std::make_shared<ClipRectLayer>(
         SkRect::MakeLTRB(0, 0, 30, 30), Clip::kHardEdge);
     transform_layer->Add(clip_rect_layer);
-    auto filter = std::make_shared<DlBlurImageFilter>(5, 5, DlTileMode::kClamp);
+    auto filter = DlImageFilter::MakeBlur(5, 5, DlTileMode::kClamp);
     auto backdrop_filter_layer =
         std::make_shared<BackdropFilterLayer>(filter, DlBlendMode::kSrcOver);
     clip_rect_layer->Add(backdrop_filter_layer);
@@ -977,10 +1004,10 @@ TEST_F(ShellTest, PushBackdropFilterToVisitedPlatformViews) {
   ASSERT_TRUE(stack_75.is_empty());
   ASSERT_FALSE(stack_50.is_empty());
 
-  auto filter = DlBlurImageFilter(5, 5, DlTileMode::kClamp);
+  auto filter = DlImageFilter::MakeBlur(5, 5, DlTileMode::kClamp);
   auto mutator = *stack_50.Begin();
   ASSERT_EQ(mutator->GetType(), MutatorType::kBackdropFilter);
-  ASSERT_EQ(mutator->GetFilterMutation().GetFilter(), filter);
+  ASSERT_EQ(mutator->GetFilterMutation().GetFilter(), *filter);
   // Make sure the filterRect is in global coordinates (contains the (1,1)
   // translation).
   ASSERT_EQ(mutator->GetFilterMutation().GetFilterRect(),
@@ -2450,7 +2477,7 @@ TEST_F(ShellTest, RasterizerMakeRasterSnapshot) {
       shell->GetTaskRunners().GetRasterTaskRunner(), [&shell, &latch]() {
         SnapshotDelegate* delegate =
             reinterpret_cast<Rasterizer*>(shell->GetRasterizer().get());
-        sk_sp<DlImage> image = delegate->MakeRasterSnapshot(
+        sk_sp<DlImage> image = delegate->MakeRasterSnapshotSync(
             MakeSizedDisplayList(50, 50), SkISize::Make(50, 50));
         EXPECT_NE(image, nullptr);
 
@@ -2515,7 +2542,7 @@ TEST_F(ShellTest, OnServiceProtocolEstimateRasterCacheMemoryWorks) {
 
         // 2.1. Rasterize the picture. Call Draw multiple times to pass the
         // access threshold (default to 3) so a cache can be generated.
-        MockCanvas dummy_canvas;
+        DisplayListBuilder dummy_canvas;
         DlPaint paint;
         bool picture_cache_generated;
         DisplayListRasterCacheItem display_list_raster_cache_item(
@@ -2565,158 +2592,6 @@ TEST_F(ShellTest, OnServiceProtocolEstimateRasterCacheMemoryWorks) {
 
   DestroyShell(std::move(shell));
 }
-
-// ktz
-TEST_F(ShellTest, OnServiceProtocolRenderFrameWithRasterStatsWorks) {
-  auto settings = CreateSettingsForFixture();
-  std::unique_ptr<Shell> shell = CreateShell(settings);
-
-  // Create the surface needed by rasterizer
-  PlatformViewNotifyCreated(shell.get());
-
-  auto configuration = RunConfiguration::InferFromSettings(settings);
-  configuration.SetEntrypoint("scene_with_red_box");
-
-  RunEngine(shell.get(), std::move(configuration));
-  // Set a non-zero viewport metrics, otherwise the scene would be discarded.
-  PostSync(shell->GetTaskRunners().GetUITaskRunner(),
-           [engine = shell->GetEngine()]() {
-             engine->SetViewportMetrics(kImplicitViewId,
-                                        ViewportMetrics{1, 1, 1, 22, 0});
-           });
-  PumpOneFrame(shell.get(), ViewContent::NoViews());
-
-  ServiceProtocol::Handler::ServiceProtocolMap empty_params;
-  rapidjson::Document document;
-  OnServiceProtocol(
-      shell.get(), ServiceProtocolEnum::kRenderFrameWithRasterStats,
-      shell->GetTaskRunners().GetRasterTaskRunner(), empty_params, &document);
-  rapidjson::StringBuffer buffer;
-  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-  document.Accept(writer);
-
-  // It would be better to parse out the json and check for the validity of
-  // fields. Below checks approximate what needs to be checked, this can not be
-  // an exact check since duration will not exactly match.
-#ifdef SHELL_ENABLE_METAL
-  std::string expected_json =
-      "\"snapshot\":[137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,3,32,0,"
-      "0,2,88,8,6,0,0,0,154,118,130,112,0,0,0,1,115,82,71,66,0,174,206,28,233,"
-      "0,0,0,4,115,66,73,84,8,8,8,8,124,8,100,136,0,0,7,103,73,68,65,84,120,"
-      "156,237,206,65,13,192,48,0,3,177,211,248,115,78,73,172,234,199,70,224,"
-      "86,91,45,0,0,128,203,190,215,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
-      "0,224,47,7,195,182,3,255,101,111,186,90,0,0,0,0,73,69,78,68,174,66,96,"
-      "130]";
-#else
-  std::string expected_json =
-      "\"snapshot\":[137,80,78,71,13,10,26,10,0,"
-      "0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,6,0,0,0,31,21,196,137,0,0,0,1,115,"
-      "82,71,66,0,174,206,28,233,0,0,0,4,115,66,73,84,8,8,8,8,124,8,100,136,0,"
-      "0,0,13,73,68,65,84,8,153,99,248,207,192,240,31,0,5,0,1,255,171,206,54,"
-      "137,0,0,0,0,73,69,78,68,174,66,96,130]";
-#endif
-  std::string actual_json = buffer.GetString();
-
-  EXPECT_THAT(actual_json, ::testing::HasSubstr(expected_json));
-  EXPECT_THAT(actual_json,
-              ::testing::HasSubstr("{\"type\":\"RenderFrameWithRasterStats\""));
-  EXPECT_THAT(actual_json, ::testing::HasSubstr("\"duration_micros\""));
-
-  PlatformViewNotifyDestroyed(shell.get());
-  DestroyShell(std::move(shell));
-}
-
-#if defined(FML_OS_MACOSX)
-TEST_F(ShellTest, OnServiceProtocolRenderFrameWithRasterStatsDisableImpeller) {
-  auto settings = CreateSettingsForFixture();
-  settings.enable_impeller = true;
-  std::unique_ptr<Shell> shell = CreateShell({
-      .settings = settings,
-      .platform_view_create_callback = ShellTestPlatformViewBuilder({
-          .rendering_backend =
-              ShellTestPlatformView::BackendType::kMetalBackend,
-      }),
-  });
-
-  // Create the surface needed by rasterizer
-  PlatformViewNotifyCreated(shell.get());
-
-  auto configuration = RunConfiguration::InferFromSettings(settings);
-  configuration.SetEntrypoint("scene_with_red_box");
-
-  RunEngine(shell.get(), std::move(configuration));
-  PumpOneFrame(shell.get(), ViewContent::NoViews());
-
-  ServiceProtocol::Handler::ServiceProtocolMap empty_params;
-  rapidjson::Document document;
-  OnServiceProtocol(
-      shell.get(), ServiceProtocolEnum::kRenderFrameWithRasterStats,
-      shell->GetTaskRunners().GetRasterTaskRunner(), empty_params, &document);
-  rapidjson::StringBuffer buffer;
-  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-  document.Accept(writer);
-  std::string actual_json = buffer.GetString();
-  std::string expected_json =
-      "{\"code\":-32000,\"message\":\"Raster status not supported on Impeller "
-      "backend.\"}";
-
-  ASSERT_EQ(actual_json, expected_json);
-
-  PlatformViewNotifyDestroyed(shell.get());
-  DestroyShell(std::move(shell));
-}
-#endif  // FML_OS_MACOSX
 
 // TODO(https://github.com/flutter/flutter/issues/100273): Disabled due to
 // flakiness.
@@ -4412,6 +4287,96 @@ TEST_F(ShellTest, PrintsErrorWhenPlatformMessageSentFromWrongThread) {
 #endif
 }
 
+TEST_F(ShellTest, NavigationMessageDispachedImmediately) {
+  Settings settings = CreateSettingsForFixture();
+  ThreadHost thread_host("io.flutter.test." + GetCurrentTestName() + ".",
+                         ThreadHost::Type::kPlatform);
+  auto task_runner = thread_host.platform_thread->GetTaskRunner();
+  TaskRunners task_runners("test", task_runner, task_runner, task_runner,
+                           task_runner);
+  auto shell = CreateShell(settings, task_runners);
+
+  auto latch = std::make_shared<fml::CountDownLatch>(1u);
+  task_runner->PostTask([&]() {
+    auto message = MakePlatformMessage(
+        "flutter/navigation",
+        {{"method", "setInitialRoute"}, {"args", "/testo"}}, nullptr);
+    SendPlatformMessage(shell.get(), std::move(message));
+    EXPECT_EQ(shell->GetEngine()->InitialRoute(), "/testo");
+
+    latch->CountDown();
+  });
+  latch->Wait();
+
+  DestroyShell(std::move(shell), task_runners);
+  ASSERT_FALSE(DartVMRef::IsInstanceRunning());
+}
+
+// Verifies a semantics Action will flush the dart event loop.
+TEST_F(ShellTest, SemanticsActionsFlushMessageLoop) {
+  Settings settings = CreateSettingsForFixture();
+  ThreadHost thread_host("io.flutter.test." + GetCurrentTestName() + ".",
+                         ThreadHost::Type::kPlatform);
+  auto task_runner = thread_host.platform_thread->GetTaskRunner();
+  TaskRunners task_runners("test", task_runner, task_runner, task_runner,
+                           task_runner);
+
+  EXPECT_EQ(task_runners.GetPlatformTaskRunner(),
+            task_runners.GetUITaskRunner());
+  auto shell = CreateShell(settings, task_runners);
+  auto configuration = RunConfiguration::InferFromSettings(settings);
+  configuration.SetEntrypoint("testSemanticsActions");
+
+  RunEngine(shell.get(), std::move(configuration));
+  fml::CountDownLatch latch(1);
+  AddNativeCallback(
+      // The Dart native function names aren't very consistent but this is
+      // just the native function name of the second vm entrypoint in the
+      // fixture.
+      "NotifyNative",
+      CREATE_NATIVE_ENTRY([&](auto args) { latch.CountDown(); }));
+
+  task_runners.GetPlatformTaskRunner()->PostTask([&] {
+    SendSemanticsAction(shell.get(), 0, SemanticsAction::kTap,
+                        fml::MallocMapping(nullptr, 0));
+  });
+  latch.Wait();
+
+  DestroyShell(std::move(shell), task_runners);
+  ASSERT_FALSE(DartVMRef::IsInstanceRunning());
+}
+
+// Verifies a pointer event will flush the dart event loop.
+TEST_F(ShellTest, PointerPacketFlushMessageLoop) {
+  Settings settings = CreateSettingsForFixture();
+  ThreadHost thread_host("io.flutter.test." + GetCurrentTestName() + ".",
+                         ThreadHost::Type::kPlatform);
+  auto task_runner = thread_host.platform_thread->GetTaskRunner();
+  TaskRunners task_runners("test", task_runner, task_runner, task_runner,
+                           task_runner);
+
+  EXPECT_EQ(task_runners.GetPlatformTaskRunner(),
+            task_runners.GetUITaskRunner());
+  auto shell = CreateShell(settings, task_runners);
+  auto configuration = RunConfiguration::InferFromSettings(settings);
+  configuration.SetEntrypoint("testPointerActions");
+
+  RunEngine(shell.get(), std::move(configuration));
+  fml::CountDownLatch latch(1);
+  AddNativeCallback(
+      // The Dart native function names aren't very consistent but this is
+      // just the native function name of the second vm entrypoint in the
+      // fixture.
+      "NotifyNative",
+      CREATE_NATIVE_ENTRY([&](auto args) { latch.CountDown(); }));
+
+  DispatchFakePointerData(shell.get(), 23);
+  latch.Wait();
+
+  DestroyShell(std::move(shell), task_runners);
+  ASSERT_FALSE(DartVMRef::IsInstanceRunning());
+}
+
 TEST_F(ShellTest, DiesIfSoftwareRenderingAndImpellerAreEnabledDeathTest) {
 #if defined(OS_FUCHSIA)
   GTEST_SKIP() << "Fuchsia";
@@ -4911,7 +4876,7 @@ TEST_F(ShellTest, RuntimeStageBackendWithImpeller) {
             EXPECT_EQ(backend, impeller::RuntimeStageBackend::kMetal);
             break;
           case impeller::Context::BackendType::kOpenGLES:
-            EXPECT_EQ(backend, impeller::RuntimeStageBackend::kOpenGLES);
+            EXPECT_EQ(backend, impeller::RuntimeStageBackend::kOpenGLES3);
             break;
           case impeller::Context::BackendType::kVulkan:
             EXPECT_EQ(backend, impeller::RuntimeStageBackend::kVulkan);

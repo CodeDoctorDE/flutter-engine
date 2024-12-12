@@ -5,7 +5,9 @@
 #include "impeller/renderer/backend/metal/texture_mtl.h"
 #include <memory>
 
+#include "impeller/base/strings.h"
 #include "impeller/base/validation.h"
+#include "impeller/core/formats.h"
 #include "impeller/core/texture_descriptor.h"
 
 namespace impeller {
@@ -59,13 +61,35 @@ std::shared_ptr<TextureMTL> TextureMTL::Create(TextureDescriptor desc,
   return std::make_shared<TextureMTL>(desc, [texture]() { return texture; });
 }
 
-TextureMTL::~TextureMTL() = default;
+TextureMTL::~TextureMTL() {
+#ifdef IMPELLER_DEBUG
+  if (debug_allocator_) {
+    auto desc = GetTextureDescriptor();
+    if (desc.storage_mode == StorageMode::kDeviceTransient) {
+      return;
+    }
+    debug_allocator_->Decrement(desc.GetByteSizeOfBaseMipLevel());
+  }
+#endif  // IMPELLER_DEBUG
+}
 
 void TextureMTL::SetLabel(std::string_view label) {
+#ifdef IMPELLER_DEBUG
   if (is_drawable_) {
     return;
   }
   [aquire_proc_() setLabel:@(label.data())];
+#endif  // IMPELLER_DEBUG
+}
+
+void TextureMTL::SetLabel(std::string_view label, std::string_view trailing) {
+#ifdef IMPELLER_DEBUG
+  if (is_drawable_) {
+    return;
+  }
+  std::string combined = SPrintF("%s %s", label.data(), trailing.data());
+  [aquire_proc_() setLabel:@(combined.data())];
+#endif  // IMPELLER_DEBUG
 }
 
 // |Texture|
@@ -75,6 +99,13 @@ bool TextureMTL::OnSetContents(std::shared_ptr<const fml::Mapping> mapping,
   // client rendering API immediately.
   return OnSetContents(mapping->GetMapping(), mapping->GetSize(), slice);
 }
+
+#ifdef IMPELLER_DEBUG
+void TextureMTL::SetDebugAllocator(
+    const std::shared_ptr<DebugAllocatorStats>& debug_allocator) {
+  debug_allocator_ = debug_allocator;
+}
+#endif  // IMPELLER_DEBUG
 
 // |Texture|
 bool TextureMTL::OnSetContents(const uint8_t* contents,

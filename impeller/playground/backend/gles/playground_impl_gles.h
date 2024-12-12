@@ -5,7 +5,6 @@
 #ifndef FLUTTER_IMPELLER_PLAYGROUND_BACKEND_GLES_PLAYGROUND_IMPL_GLES_H_
 #define FLUTTER_IMPELLER_PLAYGROUND_BACKEND_GLES_PLAYGROUND_IMPL_GLES_H_
 
-#include "flutter/fml/macros.h"
 #include "impeller/playground/playground_impl.h"
 
 namespace impeller {
@@ -38,6 +37,10 @@ class PlaygroundImplGLES final : public PlaygroundImpl {
   // |PlaygroundImpl|
   std::unique_ptr<Surface> AcquireSurfaceFrame(
       std::shared_ptr<Context> context) override;
+
+  // |PlaygroundImpl|
+  Playground::GLProcAddressResolver CreateGLProcAddressResolver()
+      const override;
 
   PlaygroundImplGLES(const PlaygroundImplGLES&) = delete;
 

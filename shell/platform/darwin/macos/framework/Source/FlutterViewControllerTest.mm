@@ -8,6 +8,7 @@
 
 #import <OCMock/OCMock.h>
 
+#include "flutter/fml/platform/darwin/cf_utils.h"
 #import "flutter/shell/platform/darwin/common/framework/Headers/FlutterBinaryMessenger.h"
 #import "flutter/shell/platform/darwin/macos/framework/Headers/FlutterEngine.h"
 #import "flutter/shell/platform/darwin/macos/framework/Source/FlutterDartProject_Internal.h"
@@ -20,6 +21,9 @@
 #include "flutter/testing/testing.h"
 
 #pragma mark - Test Helper Classes
+
+static const FlutterPointerEvent kDefaultFlutterPointerEvent = {};
+static const FlutterKeyEvent kDefaultFlutterKeyEvent = {};
 
 // A wrap to convert FlutterKeyEvent to a ObjC class.
 @interface KeyEventWrapper : NSObject
@@ -101,6 +105,7 @@
 - (bool)testFlagsChangedEventsArePropagatedIfNotHandled:(id)mockEngine;
 - (bool)testKeyboardIsRestartedOnEngineRestart:(id)mockEngine;
 - (bool)testTrackpadGesturesAreSentToFramework:(id)mockEngine;
+- (bool)mouseAndGestureEventsAreHandledSeparately:(id)engineMock;
 - (bool)testMouseDownUpEventsSentToNextResponder:(id)mockEngine;
 - (bool)testModifierKeysAreSynthesizedOnMouseMove:(id)mockEngine;
 - (bool)testViewWillAppearCalledMultipleTimes:(id)mockEngine;
@@ -211,7 +216,6 @@ TEST_F(FlutterViewControllerTest, ReparentsPluginWhenAccessibilityDisabled) {
                                                                                 nibName:nil
                                                                                  bundle:nil];
   [viewController loadView];
-  [engine setViewController:viewController];
   // Creates a NSWindow so that sub view can be first responder.
   NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 800, 600)
                                                  styleMask:NSBorderlessWindowMask
@@ -287,6 +291,12 @@ TEST_F(FlutterViewControllerMockEngineTest, TestTrackpadGesturesAreSentToFramewo
       [[FlutterViewControllerTestObjC alloc] testTrackpadGesturesAreSentToFramework:mockEngine]);
 }
 
+TEST_F(FlutterViewControllerMockEngineTest, TestmouseAndGestureEventsAreHandledSeparately) {
+  id mockEngine = GetMockEngine();
+  ASSERT_TRUE(
+      [[FlutterViewControllerTestObjC alloc] mouseAndGestureEventsAreHandledSeparately:mockEngine]);
+}
+
 TEST_F(FlutterViewControllerMockEngineTest, TestMouseDownUpEventsSentToNextResponder) {
   id mockEngine = GetMockEngine();
   ASSERT_TRUE(
@@ -333,7 +343,7 @@ TEST_F(FlutterViewControllerTest, testViewControllerIsReleased) {
   OCMStub(  // NOLINT(google-objc-avoid-throwing-exception)
       [engineMock binaryMessenger])
       .andReturn(binaryMessengerMock);
-  OCMStub([[engineMock ignoringNonObjectArgs] sendKeyEvent:FlutterKeyEvent {}
+  OCMStub([[engineMock ignoringNonObjectArgs] sendKeyEvent:kDefaultFlutterKeyEvent
                                                   callback:nil
                                                   userData:nil])
       .andCall([FlutterViewControllerTestObjC class],
@@ -369,7 +379,7 @@ TEST_F(FlutterViewControllerTest, testViewControllerIsReleased) {
 - (bool)testCtrlTabKeyEventIsPropagated:(id)engineMock {
   __block bool called = false;
   __block FlutterKeyEvent last_event;
-  OCMStub([[engineMock ignoringNonObjectArgs] sendKeyEvent:FlutterKeyEvent {}
+  OCMStub([[engineMock ignoringNonObjectArgs] sendKeyEvent:kDefaultFlutterKeyEvent
                                                   callback:nil
                                                   userData:nil])
       .andDo((^(NSInvocation* invocation) {
@@ -413,7 +423,7 @@ TEST_F(FlutterViewControllerTest, testViewControllerIsReleased) {
 - (bool)testKeyEquivalentIsPassedToTextInputPlugin:(id)engineMock {
   __block bool called = false;
   __block FlutterKeyEvent last_event;
-  OCMStub([[engineMock ignoringNonObjectArgs] sendKeyEvent:FlutterKeyEvent {}
+  OCMStub([[engineMock ignoringNonObjectArgs] sendKeyEvent:kDefaultFlutterKeyEvent
                                                   callback:nil
                                                   userData:nil])
       .andDo((^(NSInvocation* invocation) {
@@ -465,7 +475,7 @@ TEST_F(FlutterViewControllerTest, testViewControllerIsReleased) {
   OCMStub(  // NOLINT(google-objc-avoid-throwing-exception)
       [engineMock binaryMessenger])
       .andReturn(binaryMessengerMock);
-  OCMStub([[engineMock ignoringNonObjectArgs] sendKeyEvent:FlutterKeyEvent {}
+  OCMStub([[engineMock ignoringNonObjectArgs] sendKeyEvent:kDefaultFlutterKeyEvent
                                                   callback:nil
                                                   userData:nil])
       .andCall([FlutterViewControllerTestObjC class],
@@ -539,7 +549,7 @@ TEST_F(FlutterViewControllerTest, testViewControllerIsReleased) {
   OCMStub(  // NOLINT(google-objc-avoid-throwing-exception)
       [engineMock binaryMessenger])
       .andReturn(binaryMessengerMock);
-  OCMStub([[engineMock ignoringNonObjectArgs] sendKeyEvent:FlutterKeyEvent {}
+  OCMStub([[engineMock ignoringNonObjectArgs] sendKeyEvent:kDefaultFlutterKeyEvent
                                                   callback:nil
                                                   userData:nil])
       .andCall([FlutterViewControllerTestObjC class],
@@ -592,7 +602,7 @@ TEST_F(FlutterViewControllerTest, testViewControllerIsReleased) {
   OCMStub(  // NOLINT(google-objc-avoid-throwing-exception)
       [engineMock binaryMessenger])
       .andReturn(binaryMessengerMock);
-  OCMStub([[engineMock ignoringNonObjectArgs] sendKeyEvent:FlutterKeyEvent {}
+  OCMStub([[engineMock ignoringNonObjectArgs] sendKeyEvent:kDefaultFlutterKeyEvent
                                                   callback:nil
                                                   userData:nil])
       .andCall([FlutterViewControllerTestObjC class],
@@ -649,7 +659,7 @@ TEST_F(FlutterViewControllerTest, testViewControllerIsReleased) {
       .andReturn(binaryMessengerMock);
   __block bool called = false;
   __block FlutterKeyEvent last_event;
-  OCMStub([[engineMock ignoringNonObjectArgs] sendKeyEvent:FlutterKeyEvent {}
+  OCMStub([[engineMock ignoringNonObjectArgs] sendKeyEvent:kDefaultFlutterKeyEvent
                                                   callback:nil
                                                   userData:nil])
       .andDo((^(NSInvocation* invocation) {
@@ -709,7 +719,7 @@ TEST_F(FlutterViewControllerTest, testViewControllerIsReleased) {
   OCMStub([engineMock renderer]).andReturn(renderer_);
   __block bool called = false;
   __block FlutterPointerEvent last_event;
-  OCMStub([[engineMock ignoringNonObjectArgs] sendPointerEvent:FlutterPointerEvent{}])
+  OCMStub([[engineMock ignoringNonObjectArgs] sendPointerEvent:kDefaultFlutterPointerEvent])
       .andDo((^(NSInvocation* invocation) {
         FlutterPointerEvent* event;
         [invocation getArgument:&event atIndex:2];
@@ -1004,6 +1014,40 @@ TEST_F(FlutterViewControllerTest, testViewControllerIsReleased) {
   return true;
 }
 
+// Magic mouse can interleave mouse events with scroll events. This must not crash.
+- (bool)mouseAndGestureEventsAreHandledSeparately:(id)engineMock {
+  FlutterViewController* viewController = [[FlutterViewController alloc] initWithEngine:engineMock
+                                                                                nibName:@""
+                                                                                 bundle:nil];
+  [viewController loadView];
+
+  // Test for pan events.
+  // Start gesture.
+  fml::CFRef<CGEventRef> cgEventStart(
+      CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 1, 0));
+  CGEventSetType(cgEventStart, kCGEventScrollWheel);
+  CGEventSetIntegerValueField(cgEventStart, kCGScrollWheelEventScrollPhase, kCGScrollPhaseBegan);
+  CGEventSetIntegerValueField(cgEventStart, kCGScrollWheelEventIsContinuous, 1);
+  [viewController scrollWheel:[NSEvent eventWithCGEvent:cgEventStart]];
+
+  fml::CFRef<CGEventRef> cgEventUpdate(CGEventCreateCopy(cgEventStart));
+  CGEventSetIntegerValueField(cgEventUpdate, kCGScrollWheelEventScrollPhase, kCGScrollPhaseChanged);
+  CGEventSetIntegerValueField(cgEventUpdate, kCGScrollWheelEventDeltaAxis2, 1);  // pan_x
+  CGEventSetIntegerValueField(cgEventUpdate, kCGScrollWheelEventDeltaAxis1, 2);  // pan_y
+  [viewController scrollWheel:[NSEvent eventWithCGEvent:cgEventUpdate]];
+
+  NSEvent* mouseEvent = flutter::testing::CreateMouseEvent(0x00);
+  [viewController mouseEntered:mouseEvent];
+  [viewController mouseExited:mouseEvent];
+
+  // End gesture.
+  fml::CFRef<CGEventRef> cgEventEnd(CGEventCreateCopy(cgEventStart));
+  CGEventSetIntegerValueField(cgEventEnd, kCGScrollWheelEventScrollPhase, kCGScrollPhaseEnded);
+  [viewController scrollWheel:[NSEvent eventWithCGEvent:cgEventEnd]];
+
+  return true;
+}
+
 - (bool)testViewWillAppearCalledMultipleTimes:(id)engineMock {
   FlutterViewController* viewController = [[FlutterViewController alloc] initWithEngine:engineMock
                                                                                 nibName:@""
@@ -1040,7 +1084,16 @@ static void SwizzledNoop(id self, SEL _cmd) {}
 // See: https://github.com/flutter/flutter/issues/115015
 // See: http://www.openradar.me/FB12050037
 // See: https://developer.apple.com/documentation/appkit/nsresponder/1524634-mousedown
+//
+// TODO(cbracken): https://github.com/flutter/flutter/issues/154063
+// Remove this test when we drop support for macOS 12 (Monterey).
 - (bool)testMouseDownUpEventsSentToNextResponder:(id)engineMock {
+  if (@available(macOS 13.3.1, *)) {
+    // This workaround is disabled for macOS 13.3.1 onwards, since the underlying AppKit bug is
+    // fixed.
+    return true;
+  }
+
   // The root cause of the above bug is NSResponder mouseDown/mouseUp methods that don't correctly
   // walk the responder chain calling the appropriate method on the next responder under certain
   // conditions. Simulate this by swizzling out the default implementations and replacing them with
@@ -1088,7 +1141,7 @@ static void SwizzledNoop(id self, SEL _cmd) {}
 
   // Capture calls to sendKeyEvent
   __block NSMutableArray<KeyEventWrapper*>* events = [NSMutableArray array];
-  OCMStub([[engineMock ignoringNonObjectArgs] sendKeyEvent:FlutterKeyEvent {}
+  OCMStub([[engineMock ignoringNonObjectArgs] sendKeyEvent:kDefaultFlutterKeyEvent
                                                   callback:nil
                                                   userData:nil])
       .andDo((^(NSInvocation* invocation) {

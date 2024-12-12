@@ -14,6 +14,11 @@
 #include "flutter/fml/logging.h"
 #include "flutter/fml/memory/task_runner_checker.h"
 #include "flutter/fml/trace_event.h"
+#import "flutter/shell/platform/darwin/common/framework/Headers/FlutterMacros.h"
+
+FLUTTER_ASSERT_ARC
+
+NSString* const kCADisableMinimumFrameDurationOnPhoneKey = @"CADisableMinimumFrameDurationOnPhone";
 
 @interface VSyncClient ()
 @property(nonatomic, assign, readonly) double refreshRate;
@@ -65,9 +70,9 @@ double VsyncWaiterIOS::GetRefreshRate() const {
 
 - (instancetype)initWithTaskRunner:(fml::RefPtr<fml::TaskRunner>)task_runner
                           callback:(flutter::VsyncWaiter::Callback)callback {
-  self = [super init];
+  FML_DCHECK(task_runner);
 
-  if (self) {
+  if (self = [super init]) {
     _refreshRate = DisplayLinkManager.displayRefreshRate;
     _allowPauseAfterVsync = YES;
     _callback = std::move(callback);
@@ -167,7 +172,7 @@ double VsyncWaiterIOS::GetRefreshRate() const {
 }
 
 + (BOOL)maxRefreshRateEnabledOnIPhone {
-  return [[NSBundle.mainBundle objectForInfoDictionaryKey:@"CADisableMinimumFrameDurationOnPhone"]
+  return [[NSBundle.mainBundle objectForInfoDictionaryKey:kCADisableMinimumFrameDurationOnPhoneKey]
       boolValue];
 }
 

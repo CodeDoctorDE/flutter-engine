@@ -13,6 +13,7 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyInt;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -28,8 +29,10 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.content.res.Resources;
+import android.database.ContentObserver;
 import android.graphics.Rect;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.text.SpannableString;
 import android.text.SpannedString;
 import android.text.style.LocaleSpan;
@@ -1346,6 +1349,31 @@ public class AccessibilityBridgeTest {
             /*platformViewsAccessibilityDelegate=*/ null);
 
     verify(mockChannel).setAccessibilityFeatures(1 << 3);
+    reset(mockChannel);
+
+    // Now verify that clearing the BOLD_TEXT flag doesn't touch any of the other flags.
+    // Ensure the DISABLE_ANIMATION flag will be set
+    Settings.Global.putFloat(null, "transition_animation_scale", 0.0f);
+    // Ensure the BOLD_TEXT flag will be cleared
+    config.fontWeightAdjustment = 0;
+
+    accessibilityBridge =
+        setUpBridge(
+            /*rootAccessibilityView=*/ mockRootView,
+            /*accessibilityChannel=*/ mockChannel,
+            /*accessibilityManager=*/ mockManager,
+            /*contentResolver=*/ null,
+            /*accessibilityViewEmbedder=*/ mockViewEmbedder,
+            /*platformViewsAccessibilityDelegate=*/ null);
+
+    // setAccessibilityFeatures() will be called multiple times from AccessibilityBridge's
+    // constructor, verify that the latest argument is correct
+    ArgumentCaptor<Integer> captor = ArgumentCaptor.forClass(Integer.class);
+    verify(mockChannel, atLeastOnce()).setAccessibilityFeatures(captor.capture());
+    assertEquals(1 << 2 /* DISABLE_ANIMATION */, captor.getValue().intValue());
+
+    // Set back to default
+    Settings.Global.putFloat(null, "transition_animation_scale", 1.0f);
   }
 
   @Test
@@ -2013,6 +2041,45 @@ public class AccessibilityBridgeTest {
   }
 
   @Test
+  public void testItSetsDisableAnimationsFlagBasedOnTransitionAnimationScale() {
+    AccessibilityChannel mockChannel = mock(AccessibilityChannel.class);
+    ContentResolver mockContentResolver = mock(ContentResolver.class);
+
+    AccessibilityBridge accessibilityBridge =
+        setUpBridge(
+            /*rootAccessibilityView=*/ null,
+            /*accessibilityChannel=*/ mockChannel,
+            /*accessibilityManager=*/ null,
+            /*contentResolver=*/ mockContentResolver,
+            /*accessibilityViewEmbedder=*/ null,
+            /*platformViewsAccessibilityDelegate=*/ null);
+
+    // Capture the observer registered for Settings.Global.TRANSITION_ANIMATION_SCALE
+    ArgumentCaptor<ContentObserver> observerCaptor = ArgumentCaptor.forClass(ContentObserver.class);
+    verify(mockContentResolver)
+        .registerContentObserver(
+            eq(Settings.Global.getUriFor(Settings.Global.TRANSITION_ANIMATION_SCALE)),
+            eq(false),
+            observerCaptor.capture());
+    ContentObserver observer = observerCaptor.getValue();
+
+    // Initial state
+    verify(mockChannel).setAccessibilityFeatures(0);
+    reset(mockChannel);
+
+    // Animations are disabled
+    Settings.Global.putFloat(mockContentResolver, "transition_animation_scale", 0.0f);
+    observer.onChange(false);
+    verify(mockChannel).setAccessibilityFeatures(1 << 2);
+    reset(mockChannel);
+
+    // Animations are enabled
+    Settings.Global.putFloat(mockContentResolver, "transition_animation_scale", 1.0f);
+    observer.onChange(false);
+    verify(mockChannel).setAccessibilityFeatures(0);
+  }
+
+  @Test
   public void releaseDropsChannelMessageHandler() {
     AccessibilityChannel mockChannel = mock(AccessibilityChannel.class);
     AccessibilityManager mockManager = mock(AccessibilityManager.class);
@@ -2096,6 +2163,21 @@ public class AccessibilityBridgeTest {
 
     verify(mockEvent).setPackageName("test");
     verify(mockEvent).setSource(eq(mockRootView), eq(123));
+  }
+
+  @Test
+  public void itAddsClickActionToSliderNodeInfo() {
+    AccessibilityBridge accessibilityBridge = setUpBridge();
+
+    TestSemanticsNode testSemanticsNode = new TestSemanticsNode();
+    testSemanticsNode.addFlag(AccessibilityBridge.Flag.IS_SLIDER);
+    TestSemanticsUpdate testSemanticsUpdate = testSemanticsNode.toUpdate();
+    testSemanticsUpdate.sendUpdateToBridge(accessibilityBridge);
+    AccessibilityNodeInfo nodeInfo = accessibilityBridge.createAccessibilityNodeInfo(0);
+
+    assertEquals(nodeInfo.isClickable(), true);
+    List<AccessibilityNodeInfo.AccessibilityAction> actions = nodeInfo.getActionList();
+    assertTrue(actions.contains(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK));
   }
 
   AccessibilityBridge setUpBridge() {

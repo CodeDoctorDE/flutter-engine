@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "impeller/entity/geometry/line_geometry.h"
+#include "impeller/entity/geometry/geometry.h"
 
 namespace impeller {
 
@@ -11,14 +12,16 @@ LineGeometry::LineGeometry(Point p0, Point p1, Scalar width, Cap cap)
   FML_DCHECK(width >= 0);
 }
 
+LineGeometry::~LineGeometry() = default;
+
 Scalar LineGeometry::ComputePixelHalfWidth(const Matrix& transform,
                                            Scalar width) {
-  auto determinant = transform.GetDeterminant();
-  if (determinant == 0) {
-    return 0.0f;
+  Scalar max_basis = transform.GetMaxBasisLengthXY();
+  if (max_basis == 0) {
+    return {};
   }
 
-  Scalar min_size = 1.0f / sqrt(std::abs(determinant));
+  Scalar min_size = kMinStrokeSize / max_basis;
   return std::max(width, min_size) * 0.5f;
 }
 
@@ -64,6 +67,10 @@ bool LineGeometry::ComputeCorners(Point corners[4],
   return true;
 }
 
+Scalar LineGeometry::ComputeAlphaCoverage(const Matrix& entity) const {
+  return Geometry::ComputeStrokeAlphaCoverage(entity, width_);
+}
+
 GeometryResult LineGeometry::GetPositionBuffer(const ContentContext& renderer,
                                                const Entity& entity,
                                                RenderPass& pass) const {
@@ -73,8 +80,8 @@ GeometryResult LineGeometry::GetPositionBuffer(const ContentContext& renderer,
   auto radius = ComputePixelHalfWidth(transform, width_);
 
   if (cap_ == Cap::kRound) {
-    std::shared_ptr<Tessellator> tessellator = renderer.GetTessellator();
-    auto generator = tessellator->RoundCapLine(transform, p0_, p1_, radius);
+    auto generator =
+        renderer.GetTessellator().RoundCapLine(transform, p0_, p1_, radius);
     return ComputePositionGeometry(renderer, generator, entity, pass);
   }
 
@@ -108,64 +115,9 @@ GeometryResult LineGeometry::GetPositionBuffer(const ContentContext& renderer,
   };
 }
 
-// |Geometry|
-GeometryResult LineGeometry::GetPositionUVBuffer(Rect texture_coverage,
-                                                 Matrix effect_transform,
-                                                 const ContentContext& renderer,
-                                                 const Entity& entity,
-                                                 RenderPass& pass) const {
-  auto& host_buffer = renderer.GetTransientsBuffer();
-  using VT = TextureFillVertexShader::PerVertexData;
-
-  auto& transform = entity.GetTransform();
-  auto radius = ComputePixelHalfWidth(transform, width_);
-
-  auto uv_transform =
-      texture_coverage.GetNormalizingTransform() * effect_transform;
-
-  if (cap_ == Cap::kRound) {
-    std::shared_ptr<Tessellator> tessellator = renderer.GetTessellator();
-    auto generator = tessellator->RoundCapLine(transform, p0_, p1_, radius);
-    return ComputePositionUVGeometry(renderer, generator, uv_transform, entity,
-                                     pass);
-  }
-
-  Point corners[4];
-  if (!ComputeCorners(corners, transform, cap_ == Cap::kSquare)) {
-    return kEmptyResult;
-  }
-
-  size_t count = 4;
-  BufferView vertex_buffer =
-      host_buffer.Emplace(count * sizeof(VT), alignof(VT),
-                          [&uv_transform, &corners](uint8_t* buffer) {
-                            auto vertices = reinterpret_cast<VT*>(buffer);
-                            for (auto& corner : corners) {
-                              *vertices++ = {
-                                  .position = corner,
-                                  .texture_coords = uv_transform * corner,
-                              };
-                            }
-                          });
-
-  return GeometryResult{
-      .type = PrimitiveType::kTriangleStrip,
-      .vertex_buffer =
-          {
-              .vertex_buffer = vertex_buffer,
-              .vertex_count = count,
-              .index_type = IndexType::kNone,
-          },
-      .transform = entity.GetShaderTransform(pass),
-  };
-}
-
-GeometryVertexType LineGeometry::GetVertexType() const {
-  return GeometryVertexType::kPosition;
-}
-
 std::optional<Rect> LineGeometry::GetCoverage(const Matrix& transform) const {
   Point corners[4];
+  // Note: MSAA boolean doesn't matter for coverage computation.
   if (!ComputeCorners(corners, transform, cap_ != Cap::kButt)) {
     return {};
   }

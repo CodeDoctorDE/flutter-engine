@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:js_interop';
 import 'dart:js_util' as js_util;
 
 import 'package:test/bootstrap/browser.dart';
@@ -110,7 +111,7 @@ void testMain() {
     test('Surface used as DisplayCanvas resizes correctly', () {
       final Surface surface = Surface(isDisplayCanvas: true);
 
-      surface.createOrUpdateSurface(const ui.Size(9, 19));
+      surface.createOrUpdateSurface(const BitmapSize(9, 19));
       final DomCanvasElement original = getDisplayCanvas(surface);
       ui.Size canvasSize = getCssSize(surface);
 
@@ -122,7 +123,7 @@ void testMain() {
 
       // Shrinking reuses the existing canvas but translates it so
       // Skia renders into the visible area.
-      surface.createOrUpdateSurface(const ui.Size(5, 15));
+      surface.createOrUpdateSurface(const BitmapSize(5, 15));
       final DomCanvasElement shrunk = getDisplayCanvas(surface);
       canvasSize = getCssSize(surface);
       expect(shrunk.width, 9);
@@ -132,7 +133,7 @@ void testMain() {
 
       // The first increase will allocate a new surface, but will overallocate
       // by 40% to accommodate future increases.
-      surface.createOrUpdateSurface(const ui.Size(10, 20));
+      surface.createOrUpdateSurface(const BitmapSize(10, 20));
       final DomCanvasElement firstIncrease = getDisplayCanvas(surface);
       canvasSize = getCssSize(surface);
 
@@ -145,7 +146,7 @@ void testMain() {
       expect(canvasSize.height, 28);
 
       // Subsequent increases within 40% reuse the old canvas.
-      surface.createOrUpdateSurface(const ui.Size(11, 22));
+      surface.createOrUpdateSurface(const BitmapSize(11, 22));
       final DomCanvasElement secondIncrease = getDisplayCanvas(surface);
       canvasSize = getCssSize(surface);
 
@@ -156,7 +157,7 @@ void testMain() {
       expect(canvasSize.height, 28);
 
       // Increases beyond the 40% limit will cause a new allocation.
-      surface.createOrUpdateSurface(const ui.Size(20, 40));
+      surface.createOrUpdateSurface(const BitmapSize(20, 40));
       final DomCanvasElement huge = getDisplayCanvas(surface);
       canvasSize = getCssSize(surface);
 
@@ -169,7 +170,7 @@ void testMain() {
       expect(canvasSize.height, 56);
 
       // Shrink again. Reuse the last allocated surface.
-      surface.createOrUpdateSurface(const ui.Size(5, 15));
+      surface.createOrUpdateSurface(const BitmapSize(5, 15));
       final DomCanvasElement shrunk2 = getDisplayCanvas(surface);
       canvasSize = getCssSize(surface);
 
@@ -182,7 +183,7 @@ void testMain() {
       // Doubling the DPR should halve the CSS width, height, and translation of the canvas.
       // This tests https://github.com/flutter/flutter/issues/77084
       EngineFlutterDisplay.instance.debugOverrideDevicePixelRatio(2.0);
-      surface.createOrUpdateSurface(const ui.Size(5, 15));
+      surface.createOrUpdateSurface(const BitmapSize(5, 15));
       final DomCanvasElement dpr2Canvas = getDisplayCanvas(surface);
       canvasSize = getCssSize(surface);
 
@@ -292,6 +293,29 @@ void testMain() {
       },
       skip: !Surface.offscreenCanvasSupported,
     );
+
+    test('can recover from MakeSWCanvasSurface failure', () async {
+      debugOverrideJsConfiguration(<String, Object?>{
+        'canvasKitForceCpuOnly': true,
+      }.jsify() as JsFlutterConfiguration?);
+      addTearDown(() => debugOverrideJsConfiguration(null));
+
+      final Surface surface = Surface();
+      surface.debugThrowOnSoftwareSurfaceCreation = true;
+      expect(
+        () => surface.createOrUpdateSurface(const BitmapSize(12, 34)),
+        throwsA(isA<CanvasKitError>()),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(surface.debugForceNewContext, isFalse);
+
+      surface.debugThrowOnSoftwareSurfaceCreation = false;
+      final ckSurface = surface.createOrUpdateSurface(const BitmapSize(12, 34));
+
+      expect(ckSurface.surface.width(), 12);
+      expect(ckSurface.surface.height(), 34);
+    });
   });
 }
 

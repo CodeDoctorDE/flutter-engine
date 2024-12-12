@@ -19,16 +19,16 @@ import 'semantics.dart';
 /// The input element is disabled whenever the gesture mode switches to pointer
 /// events. This is to prevent the browser from taking over drag gestures. Drag
 /// gestures must be interpreted by the Flutter framework.
-class Incrementable extends PrimaryRoleManager {
-  Incrementable(SemanticsObject semanticsObject)
+class SemanticIncrementable extends SemanticRole {
+  SemanticIncrementable(SemanticsObject semanticsObject)
       : _focusManager = AccessibilityFocusManager(semanticsObject.owner),
-        super.blank(PrimaryRole.incrementable, semanticsObject) {
+        super.blank(SemanticRoleKind.incrementable, semanticsObject) {
     // The following generic roles can coexist with incrementables. Generic focus
     // management is not used by this role because the root DOM element is not
     // the one being focused on, but the internal `<input>` element.
     addLiveRegion();
     addRouteName();
-    addLabelAndValue(labelRepresentation: LeafLabelRepresentation.ariaLabel);
+    addLabelAndValue(preferredRepresentation: LabelRepresentation.ariaLabel);
 
     append(_element);
     _element.type = 'range';
@@ -43,11 +43,11 @@ class Incrementable extends PrimaryRoleManager {
       if (newInputValue > _currentSurrogateValue) {
         _currentSurrogateValue += 1;
         EnginePlatformDispatcher.instance.invokeOnSemanticsAction(
-            semanticsObject.id, ui.SemanticsAction.increase, null);
+            viewId, semanticsObject.id, ui.SemanticsAction.increase, null);
       } else if (newInputValue < _currentSurrogateValue) {
         _currentSurrogateValue -= 1;
         EnginePlatformDispatcher.instance.invokeOnSemanticsAction(
-            semanticsObject.id, ui.SemanticsAction.decrease, null);
+            viewId, semanticsObject.id, ui.SemanticsAction.decrease, null);
       }
     }));
 
@@ -62,7 +62,7 @@ class Incrementable extends PrimaryRoleManager {
 
   @override
   bool focusAsRouteDefault() {
-    _element.focus();
+    _element.focusWithoutScroll();
     return true;
   }
 

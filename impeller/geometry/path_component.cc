@@ -5,10 +5,161 @@
 #include "path_component.h"
 
 #include <cmath>
+#include <utility>
 
+#include "impeller/geometry/scalar.h"
 #include "impeller/geometry/wangs_formula.h"
 
 namespace impeller {
+
+/////////// FanVertexWriter ///////////
+
+FanVertexWriter::FanVertexWriter(Point* point_buffer, uint16_t* index_buffer)
+    : point_buffer_(point_buffer), index_buffer_(index_buffer) {}
+
+FanVertexWriter::~FanVertexWriter() = default;
+
+size_t FanVertexWriter::GetIndexCount() const {
+  return index_count_;
+}
+
+void FanVertexWriter::EndContour() {
+  if (count_ == 0) {
+    return;
+  }
+  index_buffer_[index_count_++] = 0xFFFF;
+}
+
+void FanVertexWriter::Write(Point point) {
+  index_buffer_[index_count_++] = count_;
+  point_buffer_[count_++] = point;
+}
+
+/////////// StripVertexWriter ///////////
+
+StripVertexWriter::StripVertexWriter(Point* point_buffer,
+                                     uint16_t* index_buffer)
+    : point_buffer_(point_buffer), index_buffer_(index_buffer) {}
+
+StripVertexWriter::~StripVertexWriter() = default;
+
+size_t StripVertexWriter::GetIndexCount() const {
+  return index_count_;
+}
+
+void StripVertexWriter::EndContour() {
+  if (count_ == 0u || contour_start_ == count_ - 1) {
+    // Empty or first contour.
+    return;
+  }
+
+  size_t start = contour_start_;
+  size_t end = count_ - 1;
+
+  index_buffer_[index_count_++] = start;
+
+  size_t a = start + 1;
+  size_t b = end;
+  while (a < b) {
+    index_buffer_[index_count_++] = a;
+    index_buffer_[index_count_++] = b;
+    a++;
+    b--;
+  }
+  if (a == b) {
+    index_buffer_[index_count_++] = a;
+  }
+
+  contour_start_ = count_;
+  index_buffer_[index_count_++] = 0xFFFF;
+}
+
+void StripVertexWriter::Write(Point point) {
+  point_buffer_[count_++] = point;
+}
+
+/////////// LineStripVertexWriter ////////
+
+LineStripVertexWriter::LineStripVertexWriter(std::vector<Point>& points)
+    : points_(points) {}
+
+void LineStripVertexWriter::EndContour() {}
+
+void LineStripVertexWriter::Write(Point point) {
+  if (offset_ >= points_.size()) {
+    overflow_.push_back(point);
+  } else {
+    points_[offset_++] = point;
+  }
+}
+
+const std::vector<Point>& LineStripVertexWriter::GetOversizedBuffer() const {
+  return overflow_;
+}
+
+std::pair<size_t, size_t> LineStripVertexWriter::GetVertexCount() const {
+  return std::make_pair(offset_, overflow_.size());
+}
+
+/////////// GLESVertexWriter ///////////
+
+GLESVertexWriter::GLESVertexWriter(std::vector<Point>& points,
+                                   std::vector<uint16_t>& indices)
+    : points_(points), indices_(indices) {}
+
+void GLESVertexWriter::EndContour() {
+  if (points_.size() == 0u || contour_start_ == points_.size() - 1) {
+    // Empty or first contour.
+    return;
+  }
+
+  auto start = contour_start_;
+  auto end = points_.size() - 1;
+  // All filled paths are drawn as if they are closed, but if
+  // there is an explicit close then a lineTo to the origin
+  // is inserted. This point isn't strictly necesary to
+  // correctly render the shape and can be dropped.
+  if (points_[end] == points_[start]) {
+    end--;
+  }
+
+  // Triangle strip break for subsequent contours
+  if (contour_start_ != 0) {
+    auto back = indices_.back();
+    indices_.push_back(back);
+    indices_.push_back(start);
+    indices_.push_back(start);
+
+    // If the contour has an odd number of points, insert an extra point when
+    // bridging to the next contour to preserve the correct triangle winding
+    // order.
+    if (previous_contour_odd_points_) {
+      indices_.push_back(start);
+    }
+  } else {
+    indices_.push_back(start);
+  }
+
+  size_t a = start + 1;
+  size_t b = end;
+  while (a < b) {
+    indices_.push_back(a);
+    indices_.push_back(b);
+    a++;
+    b--;
+  }
+  if (a == b) {
+    indices_.push_back(a);
+    previous_contour_odd_points_ = false;
+  } else {
+    previous_contour_odd_points_ = true;
+  }
+  contour_start_ = points_.size();
+}
+
+void GLESVertexWriter::Write(Point point) {
+  points_.push_back(point);
+}
 
 /*
  *  Based on: https://en.wikipedia.org/wiki/B%C3%A9zier_curve#Specific_cases
@@ -100,6 +251,16 @@ Point QuadraticPathComponent::SolveDerivative(Scalar time) const {
   };
 }
 
+void QuadraticPathComponent::ToLinearPathComponents(
+    Scalar scale,
+    VertexWriter& writer) const {
+  Scalar line_count = std::ceilf(ComputeQuadradicSubdivisions(scale, *this));
+  for (size_t i = 1; i < line_count; i += 1) {
+    writer.Write(Solve(i / line_count));
+  }
+  writer.Write(p2);
+}
+
 void QuadraticPathComponent::AppendPolylinePoints(
     Scalar scale_factor,
     std::vector<Point>& points) const {
@@ -117,6 +278,10 @@ void QuadraticPathComponent::ToLinearPathComponents(
     proc(Solve(i / line_count));
   }
   proc(p2);
+}
+
+size_t QuadraticPathComponent::CountLinearPathComponents(Scalar scale) const {
+  return std::ceilf(ComputeQuadradicSubdivisions(scale, *this)) + 2;
 }
 
 std::vector<Point> QuadraticPathComponent::Extrema() const {
@@ -163,6 +328,19 @@ void CubicPathComponent::AppendPolylinePoints(
     std::vector<Point>& points) const {
   ToLinearPathComponents(
       scale, [&points](const Point& point) { points.emplace_back(point); });
+}
+
+void CubicPathComponent::ToLinearPathComponents(Scalar scale,
+                                                VertexWriter& writer) const {
+  Scalar line_count = std::ceilf(ComputeCubicSubdivisions(scale, *this));
+  for (size_t i = 1; i < line_count; i++) {
+    writer.Write(Solve(i / line_count));
+  }
+  writer.Write(p2);
+}
+
+size_t CubicPathComponent::CountLinearPathComponents(Scalar scale) const {
+  return std::ceilf(ComputeCubicSubdivisions(scale, *this)) + 2;
 }
 
 inline QuadraticPathComponent CubicPathComponent::Lower() const {
@@ -294,54 +472,6 @@ std::optional<Vector2> CubicPathComponent::GetEndDirection() const {
     return (p2 - p1).Normalize();
   }
   return std::nullopt;
-}
-
-std::optional<Vector2> PathComponentStartDirectionVisitor::operator()(
-    const LinearPathComponent* component) {
-  if (!component) {
-    return std::nullopt;
-  }
-  return component->GetStartDirection();
-}
-
-std::optional<Vector2> PathComponentStartDirectionVisitor::operator()(
-    const QuadraticPathComponent* component) {
-  if (!component) {
-    return std::nullopt;
-  }
-  return component->GetStartDirection();
-}
-
-std::optional<Vector2> PathComponentStartDirectionVisitor::operator()(
-    const CubicPathComponent* component) {
-  if (!component) {
-    return std::nullopt;
-  }
-  return component->GetStartDirection();
-}
-
-std::optional<Vector2> PathComponentEndDirectionVisitor::operator()(
-    const LinearPathComponent* component) {
-  if (!component) {
-    return std::nullopt;
-  }
-  return component->GetEndDirection();
-}
-
-std::optional<Vector2> PathComponentEndDirectionVisitor::operator()(
-    const QuadraticPathComponent* component) {
-  if (!component) {
-    return std::nullopt;
-  }
-  return component->GetEndDirection();
-}
-
-std::optional<Vector2> PathComponentEndDirectionVisitor::operator()(
-    const CubicPathComponent* component) {
-  if (!component) {
-    return std::nullopt;
-  }
-  return component->GetEndDirection();
 }
 
 }  // namespace impeller

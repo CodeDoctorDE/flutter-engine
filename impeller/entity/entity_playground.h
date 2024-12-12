@@ -7,10 +7,8 @@
 
 #include "impeller/playground/playground_test.h"
 
-#include "flutter/fml/macros.h"
 #include "impeller/entity/contents/content_context.h"
 #include "impeller/entity/entity.h"
-#include "impeller/entity/entity_pass.h"
 #include "impeller/typographer/typographer_context.h"
 
 namespace impeller {
@@ -28,8 +26,6 @@ class EntityPlayground : public PlaygroundTest {
       std::shared_ptr<TypographerContext> typographer_context);
 
   bool OpenPlaygroundHere(Entity entity);
-
-  bool OpenPlaygroundHere(EntityPass& entity_pass);
 
   bool OpenPlaygroundHere(EntityPlaygroundCallback callback);
 

@@ -20,6 +20,7 @@
 #import "flutter/shell/platform/darwin/macos/framework/Headers/FlutterAppDelegate.h"
 #import "flutter/shell/platform/darwin/macos/framework/Headers/FlutterAppLifecycleDelegate.h"
 #import "flutter/shell/platform/darwin/macos/framework/Headers/FlutterPluginMacOS.h"
+#import "flutter/shell/platform/darwin/macos/framework/Source/FlutterCompositor.h"
 #import "flutter/shell/platform/darwin/macos/framework/Source/FlutterEngineTestUtils.h"
 #import "flutter/shell/platform/darwin/macos/framework/Source/FlutterViewControllerTestUtils.h"
 #include "flutter/shell/platform/embedder/embedder.h"
@@ -48,8 +49,9 @@ constexpr int64_t kImplicitViewId = 0ll;
 @end
 
 @implementation TestPlatformViewFactory
-- (nonnull NSView*)createWithViewIdentifier:(int64_t)viewId arguments:(nullable id)args {
-  return viewId == 42 ? [[NSView alloc] init] : nil;
+- (nonnull NSView*)createWithViewIdentifier:(FlutterViewIdentifier)viewIdentifier
+                                  arguments:(nullable id)args {
+  return viewIdentifier == 42 ? [[NSView alloc] init] : nil;
 }
 
 @end
@@ -222,7 +224,7 @@ TEST_F(FlutterEngineTest, CanLogToStdout) {
   EXPECT_TRUE(stdout_capture.GetOutput().find("Hello logging") != std::string::npos);
 }
 
-TEST_F(FlutterEngineTest, BackgroundIsBlack) {
+TEST_F(FlutterEngineTest, DISABLED_BackgroundIsBlack) {
   FlutterEngine* engine = GetFlutterEngine();
 
   // Latch to ensure the entire layer tree has been generated and presented.
@@ -887,7 +889,7 @@ TEST_F(FlutterEngineTest, ManageControllersIfInitiatedByController) {
   @autoreleasepool {
     // Create FVC1.
     viewController1 = [[FlutterViewController alloc] initWithProject:project];
-    EXPECT_EQ(viewController1.viewId, 0ll);
+    EXPECT_EQ(viewController1.viewIdentifier, 0ll);
 
     engine = viewController1.engine;
     engine.viewController = nil;
@@ -904,7 +906,7 @@ TEST_F(FlutterEngineTest, ManageControllersIfInitiatedByController) {
 
   engine.viewController = viewController1;
   EXPECT_EQ(engine.viewController, viewController1);
-  EXPECT_EQ(viewController1.viewId, 0ll);
+  EXPECT_EQ(viewController1.viewIdentifier, 0ll);
 }
 
 TEST_F(FlutterEngineTest, ManageControllersIfInitiatedByEngine) {
@@ -918,7 +920,7 @@ TEST_F(FlutterEngineTest, ManageControllersIfInitiatedByEngine) {
 
   @autoreleasepool {
     viewController1 = [[FlutterViewController alloc] initWithEngine:engine nibName:nil bundle:nil];
-    EXPECT_EQ(viewController1.viewId, 0ll);
+    EXPECT_EQ(viewController1.viewIdentifier, 0ll);
     EXPECT_EQ(engine.viewController, viewController1);
 
     engine.viewController = nil;
@@ -926,7 +928,7 @@ TEST_F(FlutterEngineTest, ManageControllersIfInitiatedByEngine) {
     FlutterViewController* viewController2 = [[FlutterViewController alloc] initWithEngine:engine
                                                                                    nibName:nil
                                                                                     bundle:nil];
-    EXPECT_EQ(viewController2.viewId, 0ll);
+    EXPECT_EQ(viewController2.viewIdentifier, 0ll);
     EXPECT_EQ(engine.viewController, viewController2);
   }
   // FVC2 is deallocated but FVC1 is retained.
@@ -935,7 +937,32 @@ TEST_F(FlutterEngineTest, ManageControllersIfInitiatedByEngine) {
 
   engine.viewController = viewController1;
   EXPECT_EQ(engine.viewController, viewController1);
-  EXPECT_EQ(viewController1.viewId, 0ll);
+  EXPECT_EQ(viewController1.viewIdentifier, 0ll);
+}
+
+TEST_F(FlutterEngineTest, RemovingViewDisposesCompositorResources) {
+  NSString* fixtures = @(flutter::testing::GetFixturesPath());
+  FlutterDartProject* project = [[FlutterDartProject alloc]
+      initWithAssetsPath:fixtures
+             ICUDataPath:[fixtures stringByAppendingString:@"/icudtl.dat"]];
+  FlutterEngine* engine = [[FlutterEngine alloc] initWithName:@"test" project:project];
+
+  FlutterViewController* viewController = [[FlutterViewController alloc] initWithEngine:engine
+                                                                                nibName:nil
+                                                                                 bundle:nil];
+  [viewController loadView];
+  [viewController viewDidLoad];
+  viewController.flutterView.frame = CGRectMake(0, 0, 800, 600);
+
+  EXPECT_TRUE([engine runWithEntrypoint:@"drawIntoAllViews"]);
+  [engine.testThreadSynchronizer blockUntilFrameAvailable];
+  EXPECT_EQ(engine.macOSCompositor->DebugNumViews(), 1u);
+
+  engine.viewController = nil;
+  EXPECT_EQ(engine.macOSCompositor->DebugNumViews(), 0u);
+
+  [engine shutDownEngine];
+  engine = nil;
 }
 
 TEST_F(FlutterEngineTest, HandlesTerminationRequest) {
@@ -1239,6 +1266,44 @@ TEST_F(FlutterEngineTest, DisplaySizeIsInPhysicalPixel) {
   EXPECT_TRUE(updated);
   [engine shutDownEngine];
   engine = nil;
+}
+
+TEST_F(FlutterEngineTest, ReportsHourFormat) {
+  __block BOOL expectedValue;
+
+  // Set up mocks.
+  id channelMock = OCMClassMock([FlutterBasicMessageChannel class]);
+  OCMStub([channelMock messageChannelWithName:@"flutter/settings"
+                              binaryMessenger:[OCMArg any]
+                                        codec:[OCMArg any]])
+      .andReturn(channelMock);
+  OCMStub([channelMock sendMessage:[OCMArg any]]).andDo((^(NSInvocation* invocation) {
+    __weak id message;
+    [invocation getArgument:&message atIndex:2];
+    EXPECT_EQ(message[@"alwaysUse24HourFormat"], @(expectedValue));
+  }));
+
+  id mockHourFormat = OCMClassMock([FlutterHourFormat class]);
+  OCMStub([mockHourFormat isAlwaysUse24HourFormat]).andDo((^(NSInvocation* invocation) {
+    [invocation setReturnValue:&expectedValue];
+  }));
+
+  id engineMock = CreateMockFlutterEngine(nil);
+
+  // Verify the YES case.
+  expectedValue = YES;
+  EXPECT_TRUE([engineMock runWithEntrypoint:@"main"]);
+  [engineMock shutDownEngine];
+
+  // Verify the NO case.
+  expectedValue = NO;
+  EXPECT_TRUE([engineMock runWithEntrypoint:@"main"]);
+  [engineMock shutDownEngine];
+
+  // Clean up mocks.
+  [mockHourFormat stopMocking];
+  [engineMock stopMocking];
+  [channelMock stopMocking];
 }
 
 }  // namespace flutter::testing

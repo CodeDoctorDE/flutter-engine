@@ -5,13 +5,15 @@
 #ifndef FLUTTER_SHELL_PLATFORM_DARWIN_GRAPHICS_FLUTTERDARWINCONTEXTMETALSKIA_H_
 #define FLUTTER_SHELL_PLATFORM_DARWIN_GRAPHICS_FLUTTERDARWINCONTEXTMETALSKIA_H_
 
+#if !SLIMPELLER
+
 #import <CoreVideo/CVMetalTextureCache.h>
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
 #import "flutter/shell/platform/darwin/common/framework/Headers/FlutterTexture.h"
 #import "flutter/shell/platform/darwin/graphics/FlutterDarwinExternalTextureMetal.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -74,5 +76,7 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 NS_ASSUME_NONNULL_END
+
+#endif  //  !SLIMPELLER
 
 #endif  // FLUTTER_SHELL_PLATFORM_DARWIN_GRAPHICS_FLUTTERDARWINCONTEXTMETALSKIA_H_

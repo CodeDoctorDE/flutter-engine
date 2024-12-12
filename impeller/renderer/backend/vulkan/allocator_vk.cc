@@ -8,7 +8,9 @@
 
 #include "flutter/fml/memory/ref_ptr.h"
 #include "flutter/fml/trace_event.h"
+#include "impeller/base/allocation_size.h"
 #include "impeller/core/formats.h"
+#include "impeller/renderer/backend/vulkan/capabilities_vk.h"
 #include "impeller/renderer/backend/vulkan/device_buffer_vk.h"
 #include "impeller/renderer/backend/vulkan/formats_vk.h"
 #include "impeller/renderer/backend/vulkan/texture_vk.h"
@@ -82,6 +84,7 @@ static PoolVMA CreateBufferPool(VmaAllocator allocator) {
   VmaPoolCreateInfo pool_create_info = {};
   pool_create_info.memoryTypeIndex = memTypeIndex;
   pool_create_info.flags = VMA_POOL_CREATE_IGNORE_BUFFER_IMAGE_GRANULARITY_BIT;
+  pool_create_info.minBlockCount = 1;
 
   VmaPool pool = {};
   result = vk::Result{::vmaCreatePool(allocator, &pool_create_info, &pool)};
@@ -142,6 +145,8 @@ AllocatorVK::AllocatorVK(std::weak_ptr<Context> context,
   allocator_info.physicalDevice = physical_device;
   allocator_info.device = device_holder->GetDevice();
   allocator_info.instance = instance;
+  // 4 MB, matching the default used by Skia Vulkan.
+  allocator_info.preferredLargeHeapBlockSize = 4 * 1024 * 1024;
   allocator_info.pVulkanFunctions = &proc_table;
 
   VmaAllocator allocator = {};
@@ -279,14 +284,16 @@ static VmaAllocationCreateFlags ToVmaAllocationCreateFlags(StorageMode mode) {
 
 class AllocatedTextureSourceVK final : public TextureSourceVK {
  public:
-  AllocatedTextureSourceVK(std::weak_ptr<ResourceManagerVK> resource_manager,
+  AllocatedTextureSourceVK(const ContextVK& context,
                            const TextureDescriptor& desc,
                            VmaAllocator allocator,
                            vk::Device device,
                            bool supports_memoryless_textures)
-      : TextureSourceVK(desc), resource_(std::move(resource_manager)) {
+      : TextureSourceVK(desc), resource_(context.GetResourceManager()) {
     FML_DCHECK(desc.format != PixelFormat::kUnknown);
-    vk::ImageCreateInfo image_info;
+    vk::StructureChain<vk::ImageCreateInfo, vk::ImageCompressionControlEXT>
+        image_info_chain;
+    auto& image_info = image_info_chain.get();
     image_info.flags = ToVKImageCreateFlags(desc.type);
     image_info.imageType = vk::ImageType::e2D;
     image_info.format = ToVKImageFormat(desc.format);
@@ -304,6 +311,27 @@ class AllocatedTextureSourceVK final : public TextureSourceVK {
         desc.format, desc.usage, desc.storage_mode,
         supports_memoryless_textures);
     image_info.sharingMode = vk::SharingMode::eExclusive;
+
+    vk::ImageCompressionFixedRateFlagsEXT frc_rates[1] = {
+        vk::ImageCompressionFixedRateFlagBitsEXT::eNone};
+
+    const auto frc_rate =
+        CapabilitiesVK::Cast(*context.GetCapabilities())
+            .GetSupportedFRCRate(desc.compression_type,
+                                 FRCFormatDescriptor{image_info});
+    if (frc_rate.has_value()) {
+      // This array must not be in a temporary scope.
+      frc_rates[0] = frc_rate.value();
+
+      auto& compression_info =
+          image_info_chain.get<vk::ImageCompressionControlEXT>();
+      compression_info.pFixedRateFlags = frc_rates;
+      compression_info.compressionControlPlaneCount = 1u;
+      compression_info.flags =
+          vk::ImageCompressionFlagBitsEXT::eFixedRateExplicit;
+    } else {
+      image_info_chain.unlink<vk::ImageCompressionControlEXT>();
+    }
 
     VmaAllocationCreateInfo alloc_nfo = {};
 
@@ -444,11 +472,11 @@ std::shared_ptr<Texture> AllocatorVK::OnCreateTexture(
     return nullptr;
   }
   auto source = std::make_shared<AllocatedTextureSourceVK>(
-      ContextVK::Cast(*context).GetResourceManager(),  //
-      desc,                                            //
-      allocator_.get(),                                //
-      device_holder->GetDevice(),                      //
-      supports_memoryless_textures_                    //
+      ContextVK::Cast(*context),     //
+      desc,                          //
+      allocator_.get(),              //
+      device_holder->GetDevice(),    //
+      supports_memoryless_textures_  //
   );
   if (!source->IsValid()) {
     return nullptr;
@@ -481,7 +509,6 @@ std::shared_ptr<DeviceBuffer> AllocatorVK::OnCreateBuffer(
       !desc.readback) {
     allocation_info.pool = staging_buffer_pool_.get().pool;
   }
-
   VkBuffer buffer = {};
   VmaAllocation buffer_allocation = {};
   VmaAllocationInfo buffer_allocation_info = {};
@@ -492,6 +519,10 @@ std::shared_ptr<DeviceBuffer> AllocatorVK::OnCreateBuffer(
                                              &buffer_allocation,      //
                                              &buffer_allocation_info  //
                                              )};
+
+  auto type = memory_properties_.memoryTypes[buffer_allocation_info.memoryType];
+  bool is_host_coherent =
+      !!(type.propertyFlags & vk::MemoryPropertyFlagBits::eHostCoherent);
 
   if (result != vk::Result::eSuccess) {
     VALIDATION_LOG << "Unable to allocate a device buffer: "
@@ -505,11 +536,11 @@ std::shared_ptr<DeviceBuffer> AllocatorVK::OnCreateBuffer(
       UniqueBufferVMA{BufferVMA{allocator_.get(),      //
                                 buffer_allocation,     //
                                 vk::Buffer{buffer}}},  //
-      buffer_allocation_info                           //
-  );
+      buffer_allocation_info,                          //
+      is_host_coherent);
 }
 
-size_t AllocatorVK::DebugGetHeapUsage() const {
+Bytes AllocatorVK::DebugGetHeapUsage() const {
   auto count = memory_properties_.memoryHeapCount;
   std::vector<VmaBudget> budgets(count);
   vmaGetHeapBudgets(allocator_.get(), budgets.data());
@@ -518,16 +549,15 @@ size_t AllocatorVK::DebugGetHeapUsage() const {
     const VmaBudget& budget = budgets[i];
     total_usage += budget.usage;
   }
-  // Convert bytes to MB.
-  total_usage *= 1e-6;
-  return total_usage;
+  return Bytes{static_cast<double>(total_usage)};
 }
 
 void AllocatorVK::DebugTraceMemoryStatistics() const {
 #ifdef IMPELLER_DEBUG
   FML_TRACE_COUNTER("flutter", "AllocatorVK",
                     reinterpret_cast<int64_t>(this),  // Trace Counter ID
-                    "MemoryBudgetUsageMB", DebugGetHeapUsage());
+                    "MemoryBudgetUsageMB",
+                    DebugGetHeapUsage().ConvertTo<MebiBytes>().GetSize());
 #endif  // IMPELLER_DEBUG
 }
 

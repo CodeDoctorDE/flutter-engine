@@ -6,7 +6,6 @@
 #include "flutter/testing/testing.h"  // IWYU pragma: keep
 #include "fml/synchronization/count_down_latch.h"
 #include "gtest/gtest.h"
-#include "impeller/renderer//backend/vulkan/command_encoder_vk.h"
 #include "impeller/renderer/backend/vulkan/context_vk.h"
 #include "impeller/renderer/backend/vulkan/gpu_tracer_vk.h"
 #include "impeller/renderer/backend/vulkan/test/mock_vulkan.h"
@@ -130,7 +129,6 @@ TEST(GPUTracerVK, TracesWithPartialFrameOverlap) {
   auto cmd_buffer = context->CreateCommandBuffer();
   auto blit_pass = cmd_buffer->CreateBlitPass();
   blit_pass->EncodeCommands(context->GetResourceAllocator());
-  tracer->MarkFrameEnd();
 
   auto latch = std::make_shared<fml::CountDownLatch>(1u);
   if (!context->GetCommandQueue()
@@ -140,6 +138,7 @@ TEST(GPUTracerVK, TracesWithPartialFrameOverlap) {
            .ok()) {
     GTEST_FAIL() << "Failed to submit cmd buffer";
   }
+  tracer->MarkFrameEnd();
 
   latch->Wait();
 

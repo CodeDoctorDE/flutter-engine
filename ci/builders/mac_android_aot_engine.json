@@ -1,4 +1,12 @@
 {
+    "_comment": [
+        "The builds defined in this file should not contain tests, ",
+        "and the file should not contain builds that are essentially tests. ",
+        "The only builds in this file should be the builds necessary to produce ",
+        "release artifacts. ",
+        "Tests to run on mac hosts should go in one of the other mac_ build ",
+        "definition files."
+    ],
     "builds": [
         {
             "archives": [
@@ -14,11 +22,12 @@
             ],
             "drone_dimensions": [
                 "device_type=none",
-                "os=Mac-13",
+                "os=Mac-13|Mac-14",
                 "cpu=x86"
             ],
             "gclient_variables": {
                 "download_android_deps": false,
+                "download_jdk": false,
                 "use_rbe": true
             },
             "gn": [
@@ -71,11 +80,12 @@
             ],
             "drone_dimensions": [
                 "device_type=none",
-                "os=Mac-13",
+                "os=Mac-13|Mac-14",
                 "cpu=x86"
             ],
             "gclient_variables": {
                 "download_android_deps": false,
+                "download_jdk": false,
                 "use_rbe": true
             },
             "gn": [
@@ -130,11 +140,12 @@
             ],
             "drone_dimensions": [
                 "device_type=none",
-                "os=Mac-13",
+                "os=Mac-13|Mac-14",
                 "cpu=x86"
             ],
             "gclient_variables": {
                 "download_android_deps": false,
+                "download_jdk": false,
                 "use_rbe": true
             },
             "gn": [
@@ -189,11 +200,12 @@
             ],
             "drone_dimensions": [
                 "device_type=none",
-                "os=Mac-13",
+                "os=Mac-13|Mac-14",
                 "cpu=x86"
             ],
             "gclient_variables": {
                 "download_android_deps": false,
+                "download_jdk": false,
                 "use_rbe": true
             },
             "gn": [
@@ -246,11 +258,12 @@
             ],
             "drone_dimensions": [
                 "device_type=none",
-                "os=Mac-13",
+                "os=Mac-13|Mac-14",
                 "cpu=x86"
             ],
             "gclient_variables": {
                 "download_android_deps": false,
+                "download_jdk": false,
                 "use_rbe": true
             },
             "gn": [
@@ -305,11 +318,12 @@
             ],
             "drone_dimensions": [
                 "device_type=none",
-                "os=Mac-13",
+                "os=Mac-13|Mac-14",
                 "cpu=x86"
             ],
             "gclient_variables": {
                 "download_android_deps": false,
+                "download_jdk": false,
                 "use_rbe": true
             },
             "gn": [

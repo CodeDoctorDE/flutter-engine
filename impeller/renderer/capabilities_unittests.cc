@@ -20,7 +20,6 @@ namespace testing {
 
 CAPABILITY_TEST(SupportsOffscreenMSAA, false);
 CAPABILITY_TEST(SupportsSSBO, false);
-CAPABILITY_TEST(SupportsBufferToTextureBlits, false);
 CAPABILITY_TEST(SupportsTextureToTextureBlits, false);
 CAPABILITY_TEST(SupportsFramebufferFetch, false);
 CAPABILITY_TEST(SupportsCompute, false);
@@ -28,6 +27,7 @@ CAPABILITY_TEST(SupportsComputeSubgroups, false);
 CAPABILITY_TEST(SupportsReadFromResolve, false);
 CAPABILITY_TEST(SupportsDecalSamplerAddressMode, false);
 CAPABILITY_TEST(SupportsDeviceTransientTextures, false);
+CAPABILITY_TEST(SupportsTriangleFan, false);
 
 TEST(CapabilitiesTest, DefaultColorFormat) {
   auto defaults = CapabilitiesBuilder().Build();
@@ -64,6 +64,15 @@ TEST(CapabilitiesTest, DefaultGlyphAtlasFormat) {
                      .SetDefaultGlyphAtlasFormat(PixelFormat::kA8UNormInt)
                      .Build();
   EXPECT_EQ(mutated->GetDefaultGlyphAtlasFormat(), PixelFormat::kA8UNormInt);
+}
+
+TEST(CapabilitiesTest, MaxRenderPassAttachmentSize) {
+  auto defaults = CapabilitiesBuilder().Build();
+  EXPECT_EQ(defaults->GetMaximumRenderPassAttachmentSize(), ISize(1, 1));
+  auto mutated = CapabilitiesBuilder()
+                     .SetMaximumRenderPassAttachmentSize({100, 100})
+                     .Build();
+  EXPECT_EQ(mutated->GetMaximumRenderPassAttachmentSize(), ISize(100, 100));
 }
 
 }  // namespace testing

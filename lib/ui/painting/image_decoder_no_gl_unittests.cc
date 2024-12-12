@@ -3,8 +3,11 @@
 // found in the LICENSE file.
 
 #include "flutter/lib/ui/painting/image_decoder_no_gl_unittests.h"
+#include <memory>
 
 #include "flutter/fml/endianness.h"
+#include "impeller/renderer/capabilities.h"
+#include "include/core/SkColorType.h"
 
 namespace flutter {
 namespace testing {
@@ -79,6 +82,10 @@ TEST(ImageDecoderNoGLTest, ImpellerWideGamutDisplayP3) {
 #endif
   auto data = flutter::testing::OpenFixtureAsSkData("DisplayP3Logo.png");
   auto image = SkImages::DeferredFromEncodedData(data);
+  std::shared_ptr<impeller::Capabilities> capabilities =
+      impeller::CapabilitiesBuilder()
+          .SetSupportsTextureToTextureBlits(true)
+          .Build();
   ASSERT_TRUE(image != nullptr);
   ASSERT_EQ(SkISize::Make(100, 100), image->dimensions());
 
@@ -99,7 +106,7 @@ TEST(ImageDecoderNoGLTest, ImpellerWideGamutDisplayP3) {
   std::optional<DecompressResult> wide_result =
       ImageDecoderImpeller::DecompressTexture(
           descriptor.get(), SkISize::Make(100, 100), {100, 100},
-          /*supports_wide_gamut=*/true, allocator);
+          /*supports_wide_gamut=*/true, capabilities, allocator);
   ASSERT_TRUE(wide_result.has_value());
   ASSERT_EQ(wide_result->image_info.colorType(), kRGBA_F16_SkColorType);
   ASSERT_TRUE(wide_result->image_info.colorSpace()->isSRGB());
@@ -123,7 +130,7 @@ TEST(ImageDecoderNoGLTest, ImpellerWideGamutDisplayP3) {
   std::optional<DecompressResult> narrow_result =
       ImageDecoderImpeller::DecompressTexture(
           descriptor.get(), SkISize::Make(100, 100), {100, 100},
-          /*supports_wide_gamut=*/false, allocator);
+          /*supports_wide_gamut=*/false, capabilities, allocator);
 
   ASSERT_TRUE(narrow_result.has_value());
   ASSERT_EQ(narrow_result->image_info.colorType(), kRGBA_8888_SkColorType);
@@ -136,6 +143,10 @@ TEST(ImageDecoderNoGLTest, ImpellerWideGamutIndexedPng) {
 #endif
   auto data = flutter::testing::OpenFixtureAsSkData("WideGamutIndexed.png");
   auto image = SkImages::DeferredFromEncodedData(data);
+  std::shared_ptr<impeller::Capabilities> capabilities =
+      impeller::CapabilitiesBuilder()
+          .SetSupportsTextureToTextureBlits(true)
+          .Build();
   ASSERT_TRUE(image != nullptr);
   ASSERT_EQ(SkISize::Make(100, 100), image->dimensions());
 
@@ -156,7 +167,7 @@ TEST(ImageDecoderNoGLTest, ImpellerWideGamutIndexedPng) {
   std::optional<DecompressResult> wide_result =
       ImageDecoderImpeller::DecompressTexture(
           descriptor.get(), SkISize::Make(100, 100), {100, 100},
-          /*supports_wide_gamut=*/true, allocator);
+          /*supports_wide_gamut=*/true, capabilities, allocator);
   ASSERT_EQ(wide_result->image_info.colorType(), kBGR_101010x_XR_SkColorType);
   ASSERT_TRUE(wide_result->image_info.colorSpace()->isSRGB());
 
@@ -179,10 +190,50 @@ TEST(ImageDecoderNoGLTest, ImpellerWideGamutIndexedPng) {
   std::optional<DecompressResult> narrow_result =
       ImageDecoderImpeller::DecompressTexture(
           descriptor.get(), SkISize::Make(100, 100), {100, 100},
-          /*supports_wide_gamut=*/false, allocator);
+          /*supports_wide_gamut=*/false, capabilities, allocator);
 
   ASSERT_TRUE(narrow_result.has_value());
   ASSERT_EQ(narrow_result->image_info.colorType(), kRGBA_8888_SkColorType);
+#endif  // IMPELLER_SUPPORTS_RENDERING
+}
+
+TEST(ImageDecoderNoGLTest, ImpellerUnmultipliedAlphaPng) {
+#if defined(OS_FUCHSIA)
+  GTEST_SKIP() << "Fuchsia can't load the test fixtures.";
+#endif
+  auto data = flutter::testing::OpenFixtureAsSkData("unmultiplied_alpha.png");
+  auto image = SkImages::DeferredFromEncodedData(data);
+  std::shared_ptr<impeller::Capabilities> capabilities =
+      impeller::CapabilitiesBuilder()
+          .SetSupportsTextureToTextureBlits(true)
+          .Build();
+  ASSERT_TRUE(image != nullptr);
+  ASSERT_EQ(SkISize::Make(11, 11), image->dimensions());
+
+  ImageGeneratorRegistry registry;
+  std::shared_ptr<ImageGenerator> generator =
+      registry.CreateCompatibleGenerator(data);
+  ASSERT_TRUE(generator);
+
+  auto descriptor = fml::MakeRefCounted<ImageDescriptor>(std::move(data),
+                                                         std::move(generator));
+
+#if IMPELLER_SUPPORTS_RENDERING
+  std::shared_ptr<impeller::Allocator> allocator =
+      std::make_shared<impeller::TestImpellerAllocator>();
+  std::optional<DecompressResult> result =
+      ImageDecoderImpeller::DecompressTexture(
+          descriptor.get(), SkISize::Make(11, 11), {11, 11},
+          /*supports_wide_gamut=*/true, capabilities, allocator);
+  ASSERT_EQ(result->image_info.colorType(), kRGBA_8888_SkColorType);
+
+  const SkPixmap& pixmap = result->sk_bitmap->pixmap();
+  const uint32_t* pixel_ptr = static_cast<const uint32_t*>(pixmap.addr());
+  // Test the upper left pixel is premultiplied and not solid red.
+  ASSERT_EQ(*pixel_ptr, (uint32_t)0x1000001);
+  // Test a pixel in the green box is still green.
+  ASSERT_EQ(*(pixel_ptr + 11 * 4 + 4), (uint32_t)0xFF00FF00);
+
 #endif  // IMPELLER_SUPPORTS_RENDERING
 }
 

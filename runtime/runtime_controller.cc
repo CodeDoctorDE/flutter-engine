@@ -6,9 +6,7 @@
 
 #include <utility>
 
-#include "flutter/common/constants.h"
 #include "flutter/common/settings.h"
-#include "flutter/fml/message_loop.h"
 #include "flutter/fml/trace_event.h"
 #include "flutter/lib/ui/compositing/scene.h"
 #include "flutter/lib/ui/ui_dart_state.h"
@@ -23,7 +21,10 @@ namespace flutter {
 
 RuntimeController::RuntimeController(RuntimeDelegate& p_client,
                                      const TaskRunners& task_runners)
-    : client_(p_client), vm_(nullptr), context_(task_runners) {}
+    : client_(p_client),
+      vm_(nullptr),
+      context_(task_runners),
+      pointer_data_packet_converter_(*this) {}
 
 RuntimeController::RuntimeController(
     RuntimeDelegate& p_client,
@@ -43,7 +44,8 @@ RuntimeController::RuntimeController(
       isolate_create_callback_(p_isolate_create_callback),
       isolate_shutdown_callback_(p_isolate_shutdown_callback),
       persistent_isolate_data_(std::move(p_persistent_isolate_data)),
-      context_(p_context) {}
+      context_(p_context),
+      pointer_data_packet_converter_(*this) {}
 
 std::unique_ptr<RuntimeController> RuntimeController::Spawn(
     RuntimeDelegate& p_client,
@@ -65,7 +67,7 @@ std::unique_ptr<RuntimeController> RuntimeController::Spawn(
                                        std::move(image_generator_registry),
                                        advisory_script_uri,
                                        advisory_script_entrypoint,
-                                       context_.volatile_path_tracker,
+                                       context_.deterministic_rendering_enabled,
                                        context_.concurrent_task_runner,
                                        context_.enable_impeller,
                                        context_.runtime_stage_backend};
@@ -96,7 +98,7 @@ RuntimeController::~RuntimeController() {
   }
 }
 
-bool RuntimeController::IsRootIsolateRunning() {
+bool RuntimeController::IsRootIsolateRunning() const {
   std::shared_ptr<DartIsolate> root_isolate = root_isolate_.lock();
   if (root_isolate) {
     return root_isolate->GetPhase() == DartIsolate::Phase::Running;
@@ -205,6 +207,10 @@ bool RuntimeController::RemoveView(int64_t view_id) {
   }
 
   return platform_configuration->RemoveView(view_id);
+}
+
+bool RuntimeController::ViewExists(int64_t view_id) const {
+  return platform_data_.viewport_metrics_for_views.count(view_id) != 0;
 }
 
 bool RuntimeController::SetViewportMetrics(int64_t view_id,
@@ -358,7 +364,11 @@ bool RuntimeController::DispatchPointerDataPacket(
     const PointerDataPacket& packet) {
   if (auto* platform_configuration = GetPlatformConfigurationIfAvailable()) {
     TRACE_EVENT0("flutter", "RuntimeController::DispatchPointerDataPacket");
-    platform_configuration->DispatchPointerDataPacket(packet);
+    std::unique_ptr<PointerDataPacket> converted_packet =
+        pointer_data_packet_converter_.Convert(packet);
+    if (converted_packet->GetLength() != 0) {
+      platform_configuration->DispatchPointerDataPacket(*converted_packet);
+    }
     return true;
   }
 
@@ -499,6 +509,14 @@ bool RuntimeController::HasLivePorts() {
   return Dart_HasLivePorts();
 }
 
+bool RuntimeController::HasPendingMicrotasks() {
+  std::shared_ptr<DartIsolate> root_isolate = root_isolate_.lock();
+  if (!root_isolate) {
+    return false;
+  }
+  return root_isolate->HasPendingMicrotasks();
+}
+
 tonic::DartErrorHandleType RuntimeController::GetLastError() {
   std::shared_ptr<DartIsolate> root_isolate = root_isolate_.lock();
   return root_isolate ? root_isolate->GetLastError() : tonic::kNoError;
@@ -510,7 +528,8 @@ bool RuntimeController::LaunchRootIsolate(
     std::optional<std::string> dart_entrypoint,
     std::optional<std::string> dart_entrypoint_library,
     const std::vector<std::string>& dart_entrypoint_args,
-    std::unique_ptr<IsolateConfiguration> isolate_configuration) {
+    std::unique_ptr<IsolateConfiguration> isolate_configuration,
+    std::shared_ptr<NativeAssetsManager> native_assets_manager) {
   if (root_isolate_.lock()) {
     FML_LOG(ERROR) << "Root isolate was already running.";
     return false;
@@ -530,7 +549,8 @@ bool RuntimeController::LaunchRootIsolate(
           dart_entrypoint_args,                           //
           std::move(isolate_configuration),               //
           context_,                                       //
-          spawning_isolate_.lock().get())                 //
+          spawning_isolate_.lock().get(),
+          std::move(native_assets_manager))  //
           .lock();
 
   if (!strong_root_isolate) {

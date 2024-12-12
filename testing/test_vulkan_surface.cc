@@ -11,13 +11,12 @@
 #include "third_party/skia/include/core/SkColorType.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "third_party/skia/include/core/SkSurfaceProps.h"
-#include "third_party/skia/include/gpu/GrBackendSurface.h"
+#include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
 #include "third_party/skia/include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "third_party/skia/include/gpu/ganesh/vk/GrVkBackendSurface.h"
-#include "third_party/skia/include/gpu/vk/GrVkTypes.h"
+#include "third_party/skia/include/gpu/ganesh/vk/GrVkTypes.h"
 
-namespace flutter {
-namespace testing {
+namespace flutter::testing {
 
 TestVulkanSurface::TestVulkanSurface(TestVulkanImage&& image)
     : image_(std::move(image)){};
@@ -110,5 +109,4 @@ VkImage TestVulkanSurface::GetImage() {
   return image_.GetImage();
 }
 
-}  // namespace testing
-}  // namespace flutter
+}  // namespace flutter::testing

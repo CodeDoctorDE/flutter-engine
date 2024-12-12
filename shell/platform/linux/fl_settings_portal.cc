@@ -62,7 +62,11 @@ static const FlSetting kAllSettings[] = {
 static constexpr char kClockFormat12Hour[] = "12h";
 static constexpr char kGtkThemeDarkSuffix[] = "-dark";
 
-typedef enum { kDefault, kPreferDark, kPreferLight } ColorScheme;
+typedef enum {
+  COLOR_SCHEME_DEFAULT,
+  COLOR_SCHEME_PREFER_DARK,
+  COLOR_SCHEME_PREFER_LIGHT
+} ColorScheme;
 
 struct _FlSettingsPortal {
   GObject parent_instance;
@@ -123,25 +127,25 @@ static gboolean settings_portal_read(GDBusProxy* proxy,
     if (error->domain == G_DBUS_ERROR &&
         error->code == G_DBUS_ERROR_SERVICE_UNKNOWN) {
       g_debug("XDG desktop portal unavailable: %s", error->message);
-      return false;
+      return FALSE;
     }
 
     if (error->domain == G_DBUS_ERROR &&
         error->code == G_DBUS_ERROR_UNKNOWN_METHOD) {
       g_debug("XDG desktop portal settings unavailable: %s", error->message);
-      return false;
+      return FALSE;
     }
 
     g_critical("Failed to read XDG desktop portal settings: %s",
                error->message);
-    return false;
+    return FALSE;
   }
 
   g_autoptr(GVariant) child = nullptr;
   g_variant_get(value, "(v)", &child);
   g_variant_get(child, "v", out);
 
-  return true;
+  return TRUE;
 }
 
 static void settings_portal_changed_cb(GDBusProxy* proxy,
@@ -183,7 +187,7 @@ static FlColorScheme fl_settings_portal_get_color_scheme(FlSettings* settings) {
 
   g_autoptr(GVariant) value = nullptr;
   if (get_value(self, &kColorScheme, &value)) {
-    if (g_variant_get_uint32(value) == kPreferDark) {
+    if (g_variant_get_uint32(value) == COLOR_SCHEME_PREFER_DARK) {
       color_scheme = FL_COLOR_SCHEME_DARK;
     }
   } else if (get_value(self, &kGtkTheme, &value)) {
@@ -282,7 +286,7 @@ gboolean fl_settings_portal_start(FlSettingsPortal* self, GError** error) {
       kPortalPath, kPortalSettings, nullptr, error);
 
   if (self->dbus_proxy == nullptr) {
-    return false;
+    return FALSE;
   }
 
   for (const FlSetting setting : kAllSettings) {

@@ -6,6 +6,7 @@
 #define FLUTTER_IMPELLER_ENTITY_GEOMETRY_STROKE_PATH_GEOMETRY_H_
 
 #include "impeller/entity/geometry/geometry.h"
+#include "impeller/geometry/matrix.h"
 
 namespace impeller {
 
@@ -18,7 +19,7 @@ class StrokePathGeometry final : public Geometry {
                      Cap stroke_cap,
                      Join stroke_join);
 
-  ~StrokePathGeometry();
+  ~StrokePathGeometry() override;
 
   Scalar GetStrokeWidth() const;
 
@@ -28,6 +29,8 @@ class StrokePathGeometry final : public Geometry {
 
   Join GetStrokeJoin() const;
 
+  Scalar ComputeAlphaCoverage(const Matrix& transform) const override;
+
  private:
   // |Geometry|
   GeometryResult GetPositionBuffer(const ContentContext& renderer,
@@ -35,40 +38,19 @@ class StrokePathGeometry final : public Geometry {
                                    RenderPass& pass) const override;
 
   // |Geometry|
-  GeometryResult GetPositionUVBuffer(Rect texture_coverage,
-                                     Matrix effect_transform,
-                                     const ContentContext& renderer,
-                                     const Entity& entity,
-                                     RenderPass& pass) const override;
-
-  // |Geometry|
   GeometryResult::Mode GetResultMode() const override;
-
-  // |Geometry|
-  GeometryVertexType GetVertexType() const override;
 
   // |Geometry|
   std::optional<Rect> GetCoverage(const Matrix& transform) const override;
 
   // Private for benchmarking and debugging
-  static std::vector<SolidFillVertexShader::PerVertexData>
-  GenerateSolidStrokeVertices(const Path::Polyline& polyline,
-                              Scalar stroke_width,
-                              Scalar miter_limit,
-                              Join stroke_join,
-                              Cap stroke_cap,
-                              Scalar scale);
-
-  static std::vector<TextureFillVertexShader::PerVertexData>
-  GenerateSolidStrokeVerticesUV(const Path::Polyline& polyline,
-                                Scalar stroke_width,
-                                Scalar miter_limit,
-                                Join stroke_join,
-                                Cap stroke_cap,
-                                Scalar scale,
-                                Point texture_origin,
-                                Size texture_size,
-                                const Matrix& effect_transform);
+  static std::vector<Point> GenerateSolidStrokeVertices(
+      const Path::Polyline& polyline,
+      Scalar stroke_width,
+      Scalar miter_limit,
+      Join stroke_join,
+      Cap stroke_cap,
+      Scalar scale);
 
   friend class ImpellerBenchmarkAccessor;
   friend class ImpellerEntityUnitTestAccessor;

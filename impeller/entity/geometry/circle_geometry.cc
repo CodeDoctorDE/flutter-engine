@@ -7,6 +7,8 @@
 #include "flutter/impeller/entity/geometry/circle_geometry.h"
 
 #include "flutter/impeller/entity/geometry/line_geometry.h"
+#include "impeller/core/formats.h"
+#include "impeller/entity/geometry/geometry.h"
 
 namespace impeller {
 
@@ -14,6 +16,8 @@ CircleGeometry::CircleGeometry(const Point& center, Scalar radius)
     : center_(center), radius_(radius), stroke_width_(-1.0f) {
   FML_DCHECK(radius >= 0);
 }
+
+CircleGeometry::~CircleGeometry() = default;
 
 CircleGeometry::CircleGeometry(const Point& center,
                                Scalar radius,
@@ -25,6 +29,14 @@ CircleGeometry::CircleGeometry(const Point& center,
   FML_DCHECK(stroke_width >= 0);
 }
 
+// |Geometry|
+Scalar CircleGeometry::ComputeAlphaCoverage(const Matrix& transform) const {
+  if (stroke_width_ < 0) {
+    return 1;
+  }
+  return Geometry::ComputeStrokeAlphaCoverage(transform, stroke_width_);
+}
+
 GeometryResult CircleGeometry::GetPositionBuffer(const ContentContext& renderer,
                                                  const Entity& entity,
                                                  RenderPass& pass) const {
@@ -34,43 +46,12 @@ GeometryResult CircleGeometry::GetPositionBuffer(const ContentContext& renderer,
                                         : LineGeometry::ComputePixelHalfWidth(
                                               transform, stroke_width_);
 
-  std::shared_ptr<Tessellator> tessellator = renderer.GetTessellator();
-
   // We call the StrokedCircle method which will simplify to a
   // FilledCircleGenerator if the inner_radius is <= 0.
-  auto generator =
-      tessellator->StrokedCircle(transform, center_, radius_, half_width);
+  auto generator = renderer.GetTessellator().StrokedCircle(transform, center_,
+                                                           radius_, half_width);
 
   return ComputePositionGeometry(renderer, generator, entity, pass);
-}
-
-// |Geometry|
-GeometryResult CircleGeometry::GetPositionUVBuffer(
-    Rect texture_coverage,
-    Matrix effect_transform,
-    const ContentContext& renderer,
-    const Entity& entity,
-    RenderPass& pass) const {
-  auto& transform = entity.GetTransform();
-  auto uv_transform =
-      texture_coverage.GetNormalizingTransform() * effect_transform;
-
-  Scalar half_width = stroke_width_ < 0 ? 0.0
-                                        : LineGeometry::ComputePixelHalfWidth(
-                                              transform, stroke_width_);
-  std::shared_ptr<Tessellator> tessellator = renderer.GetTessellator();
-
-  // We call the StrokedCircle method which will simplify to a
-  // FilledCircleGenerator if the inner_radius is <= 0.
-  auto generator =
-      tessellator->StrokedCircle(transform, center_, radius_, half_width);
-
-  return ComputePositionUVGeometry(renderer, generator, uv_transform, entity,
-                                   pass);
-}
-
-GeometryVertexType CircleGeometry::GetVertexType() const {
-  return GeometryVertexType::kPosition;
 }
 
 std::optional<Rect> CircleGeometry::GetCoverage(const Matrix& transform) const {

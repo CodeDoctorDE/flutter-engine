@@ -124,7 +124,7 @@ this option is particularly effective for building on low-powered laptops.
 ### Test browsers
 
 Chromium, Firefox, and Safari for iOS are version-locked using the
-[browser_lock.yaml][3] configuration file. Safari for macOS is supplied by the
+[package_lock.yaml][3] configuration file. Safari for macOS is supplied by the
 computer's operating system. Tests can be run in Edge locally, but Edge is not
 enabled on LUCI. Chromium is used as a proxy for Chrome, Edge, and other
 Chromium-based browsers.
@@ -177,10 +177,10 @@ The available versions of Chrome for Testing available can be found [here](https
 - If not already authenticated with CIPD, run `cipd auth-login` and follow
   instructions (this step requires sufficient privileges; contact
   #hackers-infra-🌡 on [Flutter's Discord server](https://github.com/flutter/flutter/wiki/Chat)).
-- Edit `dev/browser_lock.yaml` and update the following values under `chrome`:
+- Edit `dev/package_lock.yaml` and update the following values under `chrome`:
   - Set `version` to the full four part version number of the build of Chrome 
     for Testing you want to roll (for example, `118.0.5993.70`)
-- Run `dart dev/browser_roller.dart` and make sure it completes successfully.
+- Run `dart dev/package_roller.dart` and make sure it completes successfully.
   The script uploads the specified versions of Chromium (and Chromedriver) to the
   right locations in CIPD: [Chrome](https://chrome-infra-packages.appspot.com/p/flutter_internal/browsers/chrome),
   [Chromedriver](https://chrome-infra-packages.appspot.com/p/flutter_internal/browser-drivers/chrome).
@@ -193,8 +193,8 @@ If you have questions, contact the Flutter Web team on Flutter Discord on the
 #### Firefox
 
 We test with Firefox on LUCI in the Linux Web Engine builder. The process for
-rolling Firefox is even easier than Chromium. Simply update `browser_lock.yaml`
-with the latest version of Firefox, and run `browser_roller.dart`.
+rolling Firefox is even easier than Chromium. Simply update `package_lock.yaml`
+with the latest version of Firefox, and run `package_roller.dart`.
 
 #### .ci.yaml
 
@@ -210,7 +210,7 @@ After rolling Chrome and/or Firefox, also update the CI dependencies in
         ]
 ```
 
-##### **browser_roller.dart**
+##### **package_roller.dart**
 
 The script has the following command-line options:
 
@@ -220,7 +220,7 @@ The script has the following command-line options:
 > Try the following!
 >
 > ```bash
-> dart ./dev/browser_roller.dart --dry-run --verbose
+> dart dev/package_roller.dart --dry-run --verbose
 > ```
 
 #### **Other browsers / manual upload**
@@ -232,7 +232,7 @@ In general, the manual process goes like this:
 2. Create CIPD packages for these packages (more documentation is available for
    Googlers at go/cipd-flutter-web)
 3. Update the version in this repo. Do this by changing the related fields in
-   `browser_lock.yaml` file.
+   `package_lock.yaml` file.
 
 Resources:
 
@@ -243,7 +243,7 @@ Resources:
 
 ### Configuration files
 
-`browser_lock.yaml` contains the version of browsers we use to test Flutter for
+`package_lock.yaml` contains the version of browsers we use to test Flutter for
 web. Versions are not automatically updated whenever a new release is available.
 Instead, we update this file manually once in a while.
 
@@ -305,7 +305,7 @@ Once you know the version for the Emscripten SDK, change the line in
 
 [1]: https://github.com/flutter/flutter/wiki/Setting-up-the-Engine-development-environment
 [2]: https://github.com/flutter/flutter/blob/main/lib/web_ui/test/README
-[3]: https://github.com/flutter/engine/blob/main/lib/web_ui/dev/browser_lock.yaml
+[3]: https://github.com/flutter/engine/blob/main/lib/web_ui/dev/package_lock.yaml
 [4]: https://chrome-infra-packages.appspot.com/p/flutter_internal
 [5]: https://cs.opensource.google/flutter/recipes/+/master:recipes/engine/web_engine.py
 [6]: https://chromium.googlesource.com/chromium/src.git/+/main/docs/cipd_and_3pp.md#What-is-CIPD

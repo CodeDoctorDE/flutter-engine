@@ -6,12 +6,11 @@
 #include <optional>
 
 #include "fml/logging.h"
-#include "impeller/base/strings.h"
 #include "impeller/base/validation.h"
 #include "impeller/core/formats.h"
 #include "impeller/entity/contents/anonymous_contents.h"
 #include "impeller/entity/contents/content_context.h"
-#include "impeller/entity/contents/texture_contents.h"
+#include "impeller/entity/entity.h"
 #include "impeller/renderer/command_buffer.h"
 #include "impeller/renderer/render_pass.h"
 
@@ -27,7 +26,7 @@ ContentContextOptions OptionsFromPass(const RenderPass& pass) {
   FML_DCHECK(pass.HasDepthAttachment() == pass.HasStencilAttachment());
 
   opts.has_depth_stencil_attachments = has_depth_stencil_attachments;
-  opts.depth_compare = CompareFunction::kGreater;
+  opts.depth_compare = CompareFunction::kGreaterEqual;
   opts.stencil_mode = ContentContextOptions::StencilMode::kIgnore;
   return opts;
 }
@@ -50,15 +49,8 @@ Contents::Contents() = default;
 
 Contents::~Contents() = default;
 
-bool Contents::IsOpaque() const {
+bool Contents::IsOpaque(const Matrix& transform) const {
   return false;
-}
-
-Contents::ClipCoverage Contents::GetClipCoverage(
-    const Entity& entity,
-    const std::optional<Rect>& current_clip_coverage) const {
-  return {.type = ClipCoverage::Type::kNoChange,
-          .coverage = current_clip_coverage};
 }
 
 std::optional<Snapshot> Contents::RenderToSnapshot(
@@ -111,10 +103,7 @@ std::optional<Snapshot> Contents::RenderToSnapshot(
   if (!render_target.ok()) {
     return std::nullopt;
   }
-  if (!renderer.GetContext()
-           ->GetCommandQueue()
-           ->Submit(/*buffers=*/{std::move(command_buffer)})
-           .ok()) {
+  if (!renderer.GetContext()->EnqueueCommandBuffer(std::move(command_buffer))) {
     return std::nullopt;
   }
 
@@ -129,10 +118,6 @@ std::optional<Snapshot> Contents::RenderToSnapshot(
   return snapshot;
 }
 
-bool Contents::CanInheritOpacity(const Entity& entity) const {
-  return false;
-}
-
 void Contents::SetInheritedOpacity(Scalar opacity) {
   VALIDATION_LOG << "Contents::SetInheritedOpacity should never be called when "
                     "Contents::CanAcceptOpacity returns false.";
@@ -143,28 +128,9 @@ std::optional<Color> Contents::AsBackgroundColor(const Entity& entity,
   return {};
 }
 
-const FilterContents* Contents::AsFilter() const {
-  return nullptr;
-}
-
 bool Contents::ApplyColorFilter(
     const Contents::ColorFilterProc& color_filter_proc) {
   return false;
-}
-
-bool Contents::ShouldRender(const Entity& entity,
-                            const std::optional<Rect> clip_coverage) const {
-  if (!clip_coverage.has_value()) {
-    return false;
-  }
-  auto coverage = GetCoverage(entity);
-  if (!coverage.has_value()) {
-    return false;
-  }
-  if (coverage == Rect::MakeMaximum()) {
-    return true;
-  }
-  return clip_coverage->IntersectsWithRect(coverage.value());
 }
 
 void Contents::SetCoverageHint(std::optional<Rect> coverage_hint) {

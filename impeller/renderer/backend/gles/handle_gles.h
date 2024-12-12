@@ -9,13 +9,9 @@
 #include <sstream>
 #include <string>
 #include <type_traits>
-#include <unordered_map>
-#include <unordered_set>
 
 #include "flutter/fml/hash_combine.h"
-#include "flutter/fml/macros.h"
 #include "impeller/base/comparable.h"
-#include "impeller/renderer/backend/gles/gles.h"
 
 namespace impeller {
 
@@ -26,43 +22,78 @@ enum class HandleType {
   kProgram,
   kRenderBuffer,
   kFrameBuffer,
+  kFence,
 };
 
 std::string HandleTypeToString(HandleType type);
 
 class ReactorGLES;
 
-struct HandleGLES {
-  HandleType type = HandleType::kUnknown;
-  std::optional<UniqueID> name;
-
+//------------------------------------------------------------------------------
+/// @brief      Represents a handle to an underlying OpenGL object. Unlike
+///             OpenGL object handles, these handles can be collected on any
+///             thread as long as their destruction is scheduled in a reactor.
+///
+class HandleGLES {
+ public:
+  //----------------------------------------------------------------------------
+  /// @brief      Creates a dead handle.
+  ///
+  /// @return     The handle.
+  ///
   static HandleGLES DeadHandle() {
     return HandleGLES{HandleType::kUnknown, std::nullopt};
   }
 
-  constexpr bool IsDead() const { return !name.has_value(); }
+  //----------------------------------------------------------------------------
+  /// @brief      Determines if the handle is dead.
+  ///
+  /// @return     True if dead, False otherwise.
+  ///
+  constexpr bool IsDead() const { return !name_.has_value(); }
 
+  //----------------------------------------------------------------------------
+  /// @brief      Get the hash value of this handle. Handles can be used as map
+  ///             keys.
+  ///
   struct Hash {
     std::size_t operator()(const HandleGLES& handle) const {
-      return fml::HashCombine(
-          std::underlying_type_t<decltype(handle.type)>(handle.type),
-          handle.name);
+      return handle.GetHash();
     }
   };
 
+  //----------------------------------------------------------------------------
+  /// @brief      A comparer used to test the equality of two handles.
+  ///
   struct Equal {
     bool operator()(const HandleGLES& lhs, const HandleGLES& rhs) const {
-      return lhs.type == rhs.type && lhs.name == rhs.name;
+      return lhs.type_ == rhs.type_ && lhs.name_ == rhs.name_;
     }
   };
 
+  HandleType GetType() const { return type_; }
+  const std::optional<UniqueID>& GetName() const { return name_; }
+  std::size_t GetHash() const { return hash_; }
+
  private:
+  HandleType type_ = HandleType::kUnknown;
+  std::optional<UniqueID> name_;
+  std::size_t hash_;
+  std::optional<uint64_t> untracked_id_;
+
   friend class ReactorGLES;
 
-  HandleGLES(HandleType p_type, UniqueID p_name) : type(p_type), name(p_name) {}
+  HandleGLES(HandleType p_type, UniqueID p_name)
+      : type_(p_type),
+        name_(p_name),
+        hash_(fml::HashCombine(std::underlying_type_t<decltype(p_type)>(p_type),
+                               p_name)) {}
 
   HandleGLES(HandleType p_type, std::optional<UniqueID> p_name)
-      : type(p_type), name(p_name) {}
+      : type_(p_type),
+        name_(p_name),
+        hash_(fml::HashCombine(std::underlying_type_t<decltype(p_type)>(p_type),
+                               p_name)) {}
 
   static HandleGLES Create(HandleType type) {
     return HandleGLES{type, UniqueID{}};
@@ -75,12 +106,13 @@ namespace std {
 
 inline std::ostream& operator<<(std::ostream& out,
                                 const impeller::HandleGLES& handle) {
-  out << HandleTypeToString(handle.type) << "(";
+  out << HandleTypeToString(handle.GetType()) << "(";
   if (handle.IsDead()) {
     out << "DEAD";
   } else {
-    if (handle.name.has_value()) {
-      out << handle.name.value().id;
+    const std::optional<impeller::UniqueID>& name = handle.GetName();
+    if (name.has_value()) {
+      out << name.value().id;
     } else {
       out << "UNNAMED";
     }

@@ -5,6 +5,7 @@
 #include "impeller/renderer/backend/vulkan/capabilities_vk.h"
 
 #include <algorithm>
+#include <array>
 
 #include "impeller/base/validation.h"
 #include "impeller/core/formats.h"
@@ -15,27 +16,39 @@ namespace impeller {
 static constexpr const char* kInstanceLayer = "ImpellerInstance";
 
 CapabilitiesVK::CapabilitiesVK(bool enable_validations,
-                               bool fatal_missing_validations) {
-  auto extensions = vk::enumerateInstanceExtensionProperties();
-  auto layers = vk::enumerateInstanceLayerProperties();
+                               bool fatal_missing_validations,
+                               bool use_embedder_extensions,
+                               std::vector<std::string> instance_extensions,
+                               std::vector<std::string> device_extensions)
+    : use_embedder_extensions_(use_embedder_extensions),
+      embedder_instance_extensions_(std::move(instance_extensions)),
+      embedder_device_extensions_(std::move(device_extensions)) {
+  if (!use_embedder_extensions_) {
+    auto extensions = vk::enumerateInstanceExtensionProperties();
+    auto layers = vk::enumerateInstanceLayerProperties();
 
-  if (extensions.result != vk::Result::eSuccess ||
-      layers.result != vk::Result::eSuccess) {
-    return;
-  }
-
-  for (const auto& ext : extensions.value) {
-    exts_[kInstanceLayer].insert(ext.extensionName);
-  }
-
-  for (const auto& layer : layers.value) {
-    const std::string layer_name = layer.layerName;
-    auto layer_exts = vk::enumerateInstanceExtensionProperties(layer_name);
-    if (layer_exts.result != vk::Result::eSuccess) {
+    if (extensions.result != vk::Result::eSuccess ||
+        layers.result != vk::Result::eSuccess) {
       return;
     }
-    for (const auto& layer_ext : layer_exts.value) {
-      exts_[layer_name].insert(layer_ext.extensionName);
+
+    for (const auto& ext : extensions.value) {
+      exts_[kInstanceLayer].insert(ext.extensionName);
+    }
+
+    for (const auto& layer : layers.value) {
+      const std::string layer_name = layer.layerName;
+      auto layer_exts = vk::enumerateInstanceExtensionProperties(layer_name);
+      if (layer_exts.result != vk::Result::eSuccess) {
+        return;
+      }
+      for (const auto& layer_ext : layer_exts.value) {
+        exts_[layer_name].insert(layer_ext.extensionName);
+      }
+    }
+  } else {
+    for (const auto& ext : embedder_instance_extensions_) {
+      exts_[kInstanceLayer].insert(ext);
     }
   }
 
@@ -179,6 +192,14 @@ static const char* GetExtensionName(RequiredAndroidDeviceExtensionVK ext) {
       return VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME;
     case RequiredAndroidDeviceExtensionVK::kKHRDedicatedAllocation:
       return VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME;
+    case RequiredAndroidDeviceExtensionVK::kKHRExternalFenceFd:
+      return VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME;
+    case RequiredAndroidDeviceExtensionVK::kKHRExternalFence:
+      return VK_KHR_EXTERNAL_FENCE_EXTENSION_NAME;
+    case RequiredAndroidDeviceExtensionVK::kKHRExternalSemaphoreFd:
+      return VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME;
+    case RequiredAndroidDeviceExtensionVK::kKHRExternalSemaphore:
+      return VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME;
     case RequiredAndroidDeviceExtensionVK::kLast:
       return "Unknown";
   }
@@ -191,6 +212,8 @@ static const char* GetExtensionName(OptionalDeviceExtensionVK ext) {
       return VK_EXT_PIPELINE_CREATION_FEEDBACK_EXTENSION_NAME;
     case OptionalDeviceExtensionVK::kVKKHRPortabilitySubset:
       return "VK_KHR_portability_subset";
+    case OptionalDeviceExtensionVK::kEXTImageCompressionControl:
+      return VK_EXT_IMAGE_COMPRESSION_CONTROL_EXTENSION_NAME;
     case OptionalDeviceExtensionVK::kLast:
       return "Unknown";
   }
@@ -228,17 +251,25 @@ static std::optional<std::set<std::string>> GetSupportedDeviceExtensions(
 std::optional<std::vector<std::string>>
 CapabilitiesVK::GetEnabledDeviceExtensions(
     const vk::PhysicalDevice& physical_device) const {
-  auto exts = GetSupportedDeviceExtensions(physical_device);
+  std::set<std::string> exts;
 
-  if (!exts.has_value()) {
-    return std::nullopt;
+  if (!use_embedder_extensions_) {
+    auto maybe_exts = GetSupportedDeviceExtensions(physical_device);
+
+    if (!maybe_exts.has_value()) {
+      return std::nullopt;
+    }
+    exts = maybe_exts.value();
+  } else {
+    exts = std::set(embedder_device_extensions_.begin(),
+                    embedder_device_extensions_.end());
   }
 
   std::vector<std::string> enabled;
 
   auto for_each_common_extension = [&](RequiredCommonDeviceExtensionVK ext) {
     auto name = GetExtensionName(ext);
-    if (exts->find(name) == exts->end()) {
+    if (exts.find(name) == exts.end()) {
       VALIDATION_LOG << "Device does not support required extension: " << name;
       return false;
     }
@@ -249,7 +280,7 @@ CapabilitiesVK::GetEnabledDeviceExtensions(
   auto for_each_android_extension = [&](RequiredAndroidDeviceExtensionVK ext) {
 #ifdef FML_OS_ANDROID
     auto name = GetExtensionName(ext);
-    if (exts->find(name) == exts->end()) {
+    if (exts.find(name) == exts.end()) {
       VALIDATION_LOG << "Device does not support required Android extension: "
                      << name;
       return false;
@@ -261,7 +292,7 @@ CapabilitiesVK::GetEnabledDeviceExtensions(
 
   auto for_each_optional_extension = [&](OptionalDeviceExtensionVK ext) {
     auto name = GetExtensionName(ext);
-    if (exts->find(name) != exts->end()) {
+    if (exts.find(name) != exts.end()) {
       enabled.push_back(name);
     }
     return true;
@@ -363,6 +394,17 @@ CapabilitiesVK::GetEnabledDeviceFeatures(
   }
 
   PhysicalDeviceFeatures supported_chain;
+
+  // Swiftshader seems to be fussy about just this structure even being in the
+  // chain. Just unlink it if its not supported. We already perform an
+  // extensions check on the other side when reading.
+  if (!IsExtensionInList(
+          enabled_extensions.value(),
+          OptionalDeviceExtensionVK::kEXTImageCompressionControl)) {
+    supported_chain
+        .unlink<vk::PhysicalDeviceImageCompressionControlFeaturesEXT>();
+  }
+
   device.getFeatures2(&supported_chain.get());
 
   PhysicalDeviceFeatures required_chain;
@@ -390,6 +432,34 @@ CapabilitiesVK::GetEnabledDeviceFeatures(
     required.samplerYcbcrConversion = supported.samplerYcbcrConversion;
   }
 
+  // VK_EXT_image_compression_control
+  if (IsExtensionInList(
+          enabled_extensions.value(),
+          OptionalDeviceExtensionVK::kEXTImageCompressionControl)) {
+    auto& required =
+        required_chain
+            .get<vk::PhysicalDeviceImageCompressionControlFeaturesEXT>();
+    const auto& supported =
+        supported_chain
+            .get<vk::PhysicalDeviceImageCompressionControlFeaturesEXT>();
+
+    required.imageCompressionControl = supported.imageCompressionControl;
+  } else {
+    required_chain
+        .unlink<vk::PhysicalDeviceImageCompressionControlFeaturesEXT>();
+  }
+
+  // Vulkan 1.1
+  {
+    auto& required =
+        required_chain.get<vk::PhysicalDevice16BitStorageFeatures>();
+    const auto& supported =
+        supported_chain.get<vk::PhysicalDevice16BitStorageFeatures>();
+
+    required.uniformAndStorageBuffer16BitAccess =
+        supported.uniformAndStorageBuffer16BitAccess;
+  }
+
   return required_chain;
 }
 
@@ -411,11 +481,17 @@ bool CapabilitiesVK::HasExtension(const std::string& ext) const {
   return false;
 }
 
+bool CapabilitiesVK::SupportsPrimitiveRestart() const {
+  return true;
+}
+
 void CapabilitiesVK::SetOffscreenFormat(PixelFormat pixel_format) const {
   default_color_format_ = pixel_format;
 }
 
-bool CapabilitiesVK::SetPhysicalDevice(const vk::PhysicalDevice& device) {
+bool CapabilitiesVK::SetPhysicalDevice(
+    const vk::PhysicalDevice& device,
+    const PhysicalDeviceFeatures& enabled_features) {
   if (HasSuitableColorFormat(device, vk::Format::eR8G8B8A8Unorm)) {
     default_color_format_ = PixelFormat::kR8G8B8A8UNormInt;
   } else {
@@ -437,6 +513,7 @@ bool CapabilitiesVK::SetPhysicalDevice(const vk::PhysicalDevice& device) {
     default_stencil_format_ = default_depth_stencil_format_;
   }
 
+  physical_device_ = device;
   device_properties_ = device.getProperties();
 
   auto physical_properties_2 =
@@ -454,8 +531,7 @@ bool CapabilitiesVK::SetPhysicalDevice(const vk::PhysicalDevice& device) {
 
   {
     // Query texture support.
-    // TODO(jonahwilliams):
-    // https://github.com/flutter/flutter/issues/129784
+    // TODO(129784): Add a capability check for expected memory types.
     vk::PhysicalDeviceMemoryProperties memory_properties;
     device.getMemoryProperties(&memory_properties);
 
@@ -472,32 +548,58 @@ bool CapabilitiesVK::SetPhysicalDevice(const vk::PhysicalDevice& device) {
     required_common_device_extensions_.clear();
     required_android_device_extensions_.clear();
     optional_device_extensions_.clear();
-    auto exts = GetSupportedDeviceExtensions(device);
-    if (!exts.has_value()) {
-      return false;
+
+    std::set<std::string> exts;
+    if (!use_embedder_extensions_) {
+      auto maybe_exts = GetSupportedDeviceExtensions(device);
+      if (!maybe_exts.has_value()) {
+        return false;
+      }
+      exts = maybe_exts.value();
+    } else {
+      exts = std::set(embedder_device_extensions_.begin(),
+                      embedder_device_extensions_.end());
     }
+
     IterateExtensions<RequiredCommonDeviceExtensionVK>([&](auto ext) -> bool {
       auto ext_name = GetExtensionName(ext);
-      if (exts->find(ext_name) != exts->end()) {
+      if (exts.find(ext_name) != exts.end()) {
         required_common_device_extensions_.insert(ext);
       }
       return true;
     });
     IterateExtensions<RequiredAndroidDeviceExtensionVK>([&](auto ext) -> bool {
       auto ext_name = GetExtensionName(ext);
-      if (exts->find(ext_name) != exts->end()) {
+      if (exts.find(ext_name) != exts.end()) {
         required_android_device_extensions_.insert(ext);
       }
       return true;
     });
     IterateExtensions<OptionalDeviceExtensionVK>([&](auto ext) -> bool {
       auto ext_name = GetExtensionName(ext);
-      if (exts->find(ext_name) != exts->end()) {
+      if (exts.find(ext_name) != exts.end()) {
         optional_device_extensions_.insert(ext);
       }
       return true;
     });
   }
+
+  supports_texture_fixed_rate_compression_ =
+      enabled_features
+          .isLinked<vk::PhysicalDeviceImageCompressionControlFeaturesEXT>() &&
+      enabled_features
+          .get<vk::PhysicalDeviceImageCompressionControlFeaturesEXT>()
+          .imageCompressionControl;
+
+  max_render_pass_attachment_size_ =
+      ISize{device_properties_.limits.maxFramebufferWidth,
+            device_properties_.limits.maxFramebufferHeight};
+
+  // Molten, Vulkan on Metal, cannot support triangle fans because Metal doesn't
+  // support triangle fans.
+  // See VUID-VkPipelineInputAssemblyStateCreateInfo-triangleFans-04452.
+  has_triangle_fans_ =
+      !HasExtension(OptionalDeviceExtensionVK::kVKKHRPortabilitySubset);
 
   return true;
 }
@@ -514,11 +616,6 @@ bool CapabilitiesVK::SupportsImplicitResolvingMSAA() const {
 
 // |Capabilities|
 bool CapabilitiesVK::SupportsSSBO() const {
-  return true;
-}
-
-// |Capabilities|
-bool CapabilitiesVK::SupportsBufferToTextureBlits() const {
   return true;
 }
 
@@ -595,6 +692,71 @@ bool CapabilitiesVK::HasExtension(RequiredAndroidDeviceExtensionVK ext) const {
 bool CapabilitiesVK::HasExtension(OptionalDeviceExtensionVK ext) const {
   return optional_device_extensions_.find(ext) !=
          optional_device_extensions_.end();
+}
+
+bool CapabilitiesVK::SupportsTextureFixedRateCompression() const {
+  return supports_texture_fixed_rate_compression_;
+}
+
+std::optional<vk::ImageCompressionFixedRateFlagBitsEXT>
+CapabilitiesVK::GetSupportedFRCRate(CompressionType compression_type,
+                                    const FRCFormatDescriptor& desc) const {
+  if (compression_type != CompressionType::kLossy) {
+    return std::nullopt;
+  }
+  if (!supports_texture_fixed_rate_compression_) {
+    return std::nullopt;
+  }
+  // There are opportunities to hash and cache the FRCFormatDescriptor if
+  // needed.
+  vk::StructureChain<vk::PhysicalDeviceImageFormatInfo2,
+                     vk::ImageCompressionControlEXT>
+      format_chain;
+
+  auto& format_info = format_chain.get();
+
+  format_info.format = desc.format;
+  format_info.type = desc.type;
+  format_info.tiling = desc.tiling;
+  format_info.usage = desc.usage;
+  format_info.flags = desc.flags;
+
+  const auto kIdealFRCRate = vk::ImageCompressionFixedRateFlagBitsEXT::e4Bpc;
+
+  std::array<vk::ImageCompressionFixedRateFlagsEXT, 1u> rates = {kIdealFRCRate};
+
+  auto& compression = format_chain.get<vk::ImageCompressionControlEXT>();
+  compression.flags = vk::ImageCompressionFlagBitsEXT::eFixedRateExplicit;
+  compression.compressionControlPlaneCount = rates.size();
+  compression.pFixedRateFlags = rates.data();
+
+  const auto [result, supported] = physical_device_.getImageFormatProperties2<
+      vk::ImageFormatProperties2, vk::ImageCompressionPropertiesEXT>(
+      format_chain.get());
+
+  if (result != vk::Result::eSuccess ||
+      !supported.isLinked<vk::ImageCompressionPropertiesEXT>()) {
+    return std::nullopt;
+  }
+
+  const auto& compression_props =
+      supported.get<vk::ImageCompressionPropertiesEXT>();
+
+  if ((compression_props.imageCompressionFlags &
+       vk::ImageCompressionFlagBitsEXT::eFixedRateExplicit) &&
+      (compression_props.imageCompressionFixedRateFlags & kIdealFRCRate)) {
+    return kIdealFRCRate;
+  }
+
+  return std::nullopt;
+}
+
+bool CapabilitiesVK::SupportsTriangleFan() const {
+  return has_triangle_fans_;
+}
+
+ISize CapabilitiesVK::GetMaximumRenderPassAttachmentSize() const {
+  return max_render_pass_attachment_size_;
 }
 
 }  // namespace impeller

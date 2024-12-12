@@ -44,7 +44,7 @@ int _nextViewId = kImplicitViewId + 1;
 ///
 /// In addition to everything defined in [ui.FlutterView], this class adds
 /// a few web-specific properties.
-base class EngineFlutterView implements ui.FlutterView {
+class EngineFlutterView implements ui.FlutterView {
   /// Creates a [ui.FlutterView] that can be used in multi-view mode.
   ///
   /// The [hostElement] parameter specifies the container in the DOM into which
@@ -135,11 +135,6 @@ base class EngineFlutterView implements ui.FlutterView {
     semantics.updateSemantics(update);
   }
 
-  // TODO(yjbanov): How should this look like for multi-view?
-  //                https://github.com/flutter/flutter/issues/137445
-  late final AccessibilityAnnouncements accessibilityAnnouncements =
-      AccessibilityAnnouncements(hostElement: dom.announcementsHost);
-
   late final GlobalHtmlAttributes _globalHtmlAttributes = GlobalHtmlAttributes(
     rootElement: dom.rootElement,
     hostElement: embeddingStrategy.hostElement,
@@ -162,7 +157,7 @@ base class EngineFlutterView implements ui.FlutterView {
 
   final JsViewConstraints? _jsViewConstraints;
 
-  late final EngineSemanticsOwner semantics = EngineSemanticsOwner(dom.semanticsHost);
+  late final EngineSemanticsOwner semantics = EngineSemanticsOwner(viewId, dom.semanticsHost);
 
   @override
   ui.Size get physicalSize {
@@ -394,6 +389,9 @@ final class EngineFlutterWindow extends EngineFlutterView implements ui.Singleto
 
   @override
   bool get nativeSpellCheckServiceDefined => platformDispatcher.nativeSpellCheckServiceDefined;
+
+  @override
+  bool get supportsShowingSystemContextMenu => platformDispatcher.supportsShowingSystemContextMenu;
 
   @override
   bool get brieflyShowPassword => platformDispatcher.brieflyShowPassword;

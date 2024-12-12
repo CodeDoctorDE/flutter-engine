@@ -2,19 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui';
 
-import 'package:litetest/litetest.dart';
+import 'package:test/test.dart';
 
+import 'goldens.dart';
 import 'impeller_enabled.dart';
 
 const Color red = Color(0xFFAA0000);
 const Color green = Color(0xFF00AA00);
 
-const int greenCenterBlurred = 0x1C001300;
-const int greenSideBlurred = 0x15000E00;
-const int greenCornerBlurred = 0x10000A00;
+const int greenCenterBlurred = 0x29001B00;
+const int greenSideBlurred = 0x19001000;
+const int greenCornerBlurred = 0x0F000A00;
 
 const int greenCenterScaled = 0xFF00AA00;
 const int greenSideScaled = 0x80005500;
@@ -41,7 +43,7 @@ const List<double> halvesBrightnessColorMatrix = <double>[
   0,   0,   0,   1, 0,
 ];
 
-void main() {
+void main() async {
   Future<Uint32List> getBytesForPaint(Paint paint, {int width = 3, int height = 3}) async {
     final PictureRecorder recorder = PictureRecorder();
     final Canvas recorderCanvas = Canvas(recorder);
@@ -66,7 +68,7 @@ void main() {
     return bytes.buffer.asUint32List();
   }
 
-  ImageFilter makeBlur(double sigmaX, double sigmaY, [TileMode tileMode = TileMode.clamp]) =>
+  ImageFilter makeBlur(double sigmaX, double sigmaY, [TileMode? tileMode]) =>
     ImageFilter.blur(sigmaX: sigmaX, sigmaY: sigmaY, tileMode: tileMode);
 
   ImageFilter makeDilate(double radiusX, double radiusY) =>
@@ -104,6 +106,9 @@ void main() {
     return <ImageFilter>[
       makeBlur(10.0, 10.0),
       makeBlur(10.0, 10.0, TileMode.decal),
+      makeBlur(10.0, 10.0, TileMode.clamp),
+      makeBlur(10.0, 10.0, TileMode.mirror),
+      makeBlur(10.0, 10.0, TileMode.repeated),
       makeBlur(10.0, 20.0),
       makeBlur(20.0, 20.0),
       makeDilate(10.0, 20.0),
@@ -131,9 +136,9 @@ void main() {
           expect(a[i].hashCode, equals(b[j].hashCode));
           expect(a[i].toString(), equals(b[j].toString()));
         } else {
-          expect(a[i], notEquals(b[j]));
+          expect(a[i], isNot(b[j]));
           // No expectations on hashCode if objects are not equal
-          expect(a[i].toString(), notEquals(b[j].toString()));
+          expect(a[i].toString(), isNot(b[j].toString()));
         }
       }
     }
@@ -179,6 +184,24 @@ void main() {
 
     final Uint32List bytes = await getBytesForPaint(paint);
     checkBytes(bytes, greenCenterBlurred, greenSideBlurred, greenCornerBlurred);
+  });
+
+  test('ImageFilter - blur toString', () async {
+
+    var filter = makeBlur(1.9, 2.1);
+    expect(filter.toString(), 'ImageFilter.blur(1.9, 2.1, unspecified)');
+
+    filter = makeBlur(1.9, 2.1, TileMode.decal);
+    expect(filter.toString(), 'ImageFilter.blur(1.9, 2.1, decal)');
+
+    filter = makeBlur(1.9, 2.1, TileMode.clamp);
+    expect(filter.toString(), 'ImageFilter.blur(1.9, 2.1, clamp)');
+
+    filter = makeBlur(1.9, 2.1, TileMode.mirror);
+    expect(filter.toString(), 'ImageFilter.blur(1.9, 2.1, mirror)');
+
+    filter = makeBlur(1.9, 2.1, TileMode.repeated);
+    expect(filter.toString(), 'ImageFilter.blur(1.9, 2.1, repeated)');
   });
 
   test('ImageFilter - dilate', () async {
@@ -277,7 +300,7 @@ void main() {
   test('Composite ImageFilter toString', () {
     expect(
       ImageFilter.compose(outer: makeBlur(20.0, 20.0, TileMode.decal), inner: makeBlur(10.0, 10.0)).toString(),
-      contains('blur(10.0, 10.0, clamp) -> blur(20.0, 20.0, decal)'),
+      contains('blur(10.0, 10.0, unspecified) -> blur(20.0, 20.0, decal)'),
     );
 
     // Produces a flat list of filters
@@ -291,10 +314,69 @@ void main() {
       ).toString(),
       contains(
         'matrix([10.0, 0.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -0.0, -0.0, 0.0, 1.0], FilterQuality.low) -> '
-        'ColorFilter.mode(Color(0xffabcdef), BlendMode.color) -> '
+        'ColorFilter.mode(${const Color(0xFFABCDEF)}, BlendMode.color) -> '
         'blur(20.0, 20.0, repeated) -> '
         'blur(30.0, 30.0, mirror)'
       ),
     );
+  });
+
+  // Tests that FilterQuality.<value> produces the expected golden file.
+  group('ImageFilter|FilterQuality', () {
+    /// Draw a red-green checkerboard pattern with 1x1 squares (pixels).
+    Future<Image> drawCheckerboard({
+      int width = 100,
+      int height = 100,
+    }) async {
+      final Completer<Image> completer = Completer<Image>();
+      final Uint32List pixels = Uint32List.fromList(
+        List<int>.generate(width * height, (int index) {
+          final int x = index % width;
+          final int y = index ~/ width;
+          return (x % 2 == y % 2) ? red.value : green.value;
+        }),
+      );
+      decodeImageFromPixels(
+        Uint8List.view(pixels.buffer),
+        width,
+        height,
+        PixelFormat.rgba8888,
+        completer.complete,
+      );
+      return completer.future;
+    }
+
+    final Future<Image> redGreenCheckerboard = drawCheckerboard();
+
+    /// Return the [image] shrunk and then scaled.
+    Future<Image> shrinkAndScaleImage(
+      Image image,
+      FilterQuality quality, {
+      double factorDown = 0.25,
+      double factorUp = 10,
+    }) async {
+      Future<Image> scale(Image image, double factor) async {
+        final Paint paint = Paint()..filterQuality = quality;
+        final PictureRecorder recorder = PictureRecorder();
+        final Canvas canvas = Canvas(recorder);
+
+        final Rect input = Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble());
+        final Rect output = Rect.fromLTWH(0, 0, input.width * factor, input.height * factor);
+
+        canvas.drawImageRect(image, input, output, paint);
+        final Picture picture = recorder.endRecording();
+        return picture.toImage(output.width.toInt(), output.height.toInt());
+      }
+
+      final Image shrunk = await scale(image, factorDown);
+      return scale(shrunk, factorUp);
+    }
+
+    test('Scaling a checkerboard of 1x1 red-green pixels with FilterQuality.none', () async {
+      final ImageComparer comparer = await ImageComparer.create();
+      final Image base = await redGreenCheckerboard;
+      final Image scaled = await shrinkAndScaleImage(base, FilterQuality.none);
+      await comparer.addGoldenImage(scaled, 'dart_ui_filter_quality_none_scale_1x1_red_green_checkerboard.png');
+    });
   });
 }

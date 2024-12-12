@@ -28,11 +28,6 @@ class StandardCapabilities final : public Capabilities {
   bool SupportsSSBO() const override { return supports_ssbo_; }
 
   // |Capabilities|
-  bool SupportsBufferToTextureBlits() const override {
-    return supports_buffer_to_texture_blits_;
-  }
-
-  // |Capabilities|
   bool SupportsTextureToTextureBlits() const override {
     return supports_texture_to_texture_blits_;
   }
@@ -61,6 +56,9 @@ class StandardCapabilities final : public Capabilities {
   }
 
   // |Capabilities|
+  bool SupportsTriangleFan() const override { return supports_triangle_fan_; }
+
+  // |Capabilities|
   PixelFormat GetDefaultColorFormat() const override {
     return default_color_format_;
   }
@@ -85,10 +83,17 @@ class StandardCapabilities final : public Capabilities {
     return default_glyph_atlas_format_;
   }
 
+  // |Capabilities|
+  ISize GetMaximumRenderPassAttachmentSize() const override {
+    return default_maximum_render_pass_attachment_size_;
+  }
+
+  // |Capabilities|
+  bool SupportsPrimitiveRestart() const override { return true; }
+
  private:
   StandardCapabilities(bool supports_offscreen_msaa,
                        bool supports_ssbo,
-                       bool supports_buffer_to_texture_blits,
                        bool supports_texture_to_texture_blits,
                        bool supports_framebuffer_fetch,
                        bool supports_compute,
@@ -96,13 +101,14 @@ class StandardCapabilities final : public Capabilities {
                        bool supports_read_from_resolve,
                        bool supports_decal_sampler_address_mode,
                        bool supports_device_transient_textures,
+                       bool supports_triangle_fan,
                        PixelFormat default_color_format,
                        PixelFormat default_stencil_format,
                        PixelFormat default_depth_stencil_format,
-                       PixelFormat default_glyph_atlas_format)
+                       PixelFormat default_glyph_atlas_format,
+                       ISize default_maximum_render_pass_attachment_size)
       : supports_offscreen_msaa_(supports_offscreen_msaa),
         supports_ssbo_(supports_ssbo),
-        supports_buffer_to_texture_blits_(supports_buffer_to_texture_blits),
         supports_texture_to_texture_blits_(supports_texture_to_texture_blits),
         supports_framebuffer_fetch_(supports_framebuffer_fetch),
         supports_compute_(supports_compute),
@@ -111,16 +117,18 @@ class StandardCapabilities final : public Capabilities {
         supports_decal_sampler_address_mode_(
             supports_decal_sampler_address_mode),
         supports_device_transient_textures_(supports_device_transient_textures),
+        supports_triangle_fan_(supports_triangle_fan),
         default_color_format_(default_color_format),
         default_stencil_format_(default_stencil_format),
         default_depth_stencil_format_(default_depth_stencil_format),
-        default_glyph_atlas_format_(default_glyph_atlas_format) {}
+        default_glyph_atlas_format_(default_glyph_atlas_format),
+        default_maximum_render_pass_attachment_size_(
+            default_maximum_render_pass_attachment_size) {}
 
   friend class CapabilitiesBuilder;
 
   bool supports_offscreen_msaa_ = false;
   bool supports_ssbo_ = false;
-  bool supports_buffer_to_texture_blits_ = false;
   bool supports_texture_to_texture_blits_ = false;
   bool supports_framebuffer_fetch_ = false;
   bool supports_compute_ = false;
@@ -128,10 +136,12 @@ class StandardCapabilities final : public Capabilities {
   bool supports_read_from_resolve_ = false;
   bool supports_decal_sampler_address_mode_ = false;
   bool supports_device_transient_textures_ = false;
+  bool supports_triangle_fan_ = false;
   PixelFormat default_color_format_ = PixelFormat::kUnknown;
   PixelFormat default_stencil_format_ = PixelFormat::kUnknown;
   PixelFormat default_depth_stencil_format_ = PixelFormat::kUnknown;
   PixelFormat default_glyph_atlas_format_ = PixelFormat::kUnknown;
+  ISize default_maximum_render_pass_attachment_size_ = ISize(1, 1);
 
   StandardCapabilities(const StandardCapabilities&) = delete;
 
@@ -149,12 +159,6 @@ CapabilitiesBuilder& CapabilitiesBuilder::SetSupportsOffscreenMSAA(bool value) {
 
 CapabilitiesBuilder& CapabilitiesBuilder::SetSupportsSSBO(bool value) {
   supports_ssbo_ = value;
-  return *this;
-}
-
-CapabilitiesBuilder& CapabilitiesBuilder::SetSupportsBufferToTextureBlits(
-    bool value) {
-  supports_buffer_to_texture_blits_ = value;
   return *this;
 }
 
@@ -223,11 +227,21 @@ CapabilitiesBuilder& CapabilitiesBuilder::SetDefaultGlyphAtlasFormat(
   return *this;
 }
 
+CapabilitiesBuilder& CapabilitiesBuilder::SetSupportsTriangleFan(bool value) {
+  supports_triangle_fan_ = value;
+  return *this;
+}
+
+CapabilitiesBuilder& CapabilitiesBuilder::SetMaximumRenderPassAttachmentSize(
+    ISize size) {
+  default_maximum_render_pass_attachment_size_ = size;
+  return *this;
+}
+
 std::unique_ptr<Capabilities> CapabilitiesBuilder::Build() {
   return std::unique_ptr<StandardCapabilities>(new StandardCapabilities(  //
       supports_offscreen_msaa_,                                           //
       supports_ssbo_,                                                     //
-      supports_buffer_to_texture_blits_,                                  //
       supports_texture_to_texture_blits_,                                 //
       supports_framebuffer_fetch_,                                        //
       supports_compute_,                                                  //
@@ -235,10 +249,12 @@ std::unique_ptr<Capabilities> CapabilitiesBuilder::Build() {
       supports_read_from_resolve_,                                        //
       supports_decal_sampler_address_mode_,                               //
       supports_device_transient_textures_,                                //
+      supports_triangle_fan_,                                             //
       default_color_format_.value_or(PixelFormat::kUnknown),              //
       default_stencil_format_.value_or(PixelFormat::kUnknown),            //
       default_depth_stencil_format_.value_or(PixelFormat::kUnknown),      //
-      default_glyph_atlas_format_.value_or(PixelFormat::kUnknown)         //
+      default_glyph_atlas_format_.value_or(PixelFormat::kUnknown),        //
+      default_maximum_render_pass_attachment_size_.value_or(ISize{1, 1})  //
       ));
 }
 

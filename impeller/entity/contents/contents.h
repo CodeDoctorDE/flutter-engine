@@ -7,11 +7,8 @@
 
 #include <functional>
 #include <memory>
-#include <vector>
 
-#include "flutter/fml/macros.h"
 #include "impeller/core/sampler_descriptor.h"
-#include "impeller/core/texture.h"
 #include "impeller/geometry/color.h"
 #include "impeller/geometry/rect.h"
 #include "impeller/renderer/snapshot.h"
@@ -37,13 +34,6 @@ class Contents {
   /// unpremultiplied color.
   using ColorFilterProc = std::function<Color(Color)>;
 
-  struct ClipCoverage {
-    enum class Type { kNoChange, kAppend, kRestore };
-
-    Type type = Type::kNoChange;
-    std::optional<Rect> coverage = std::nullopt;
-  };
-
   using RenderProc = std::function<bool(const ContentContext& renderer,
                                         const Entity& entity,
                                         RenderPass& pass)>;
@@ -55,12 +45,6 @@ class Contents {
   Contents();
 
   virtual ~Contents();
-
-  /// @brief  Add any text data to the specified lazy atlas. The scale parameter
-  ///         must be used again later when drawing the text.
-  virtual void PopulateGlyphAtlas(
-      const std::shared_ptr<LazyGlyphAtlas>& lazy_glyph_atlas,
-      Scalar scale) {}
 
   virtual bool Render(const ContentContext& renderer,
                       const Entity& entity,
@@ -94,20 +78,9 @@ class Contents {
   ///        properties (e.g. the blend mode), clips/visibility culling, or
   ///        inherited opacity.
   ///
-  virtual bool IsOpaque() const;
-
-  //----------------------------------------------------------------------------
-  /// @brief Given the current pass space bounding rectangle of the clip
-  ///        buffer, return the expected clip coverage after this draw call.
-  ///        This should only be implemented for contents that may write to the
-  ///        clip buffer.
-  ///
-  ///        During rendering, coverage coordinates count pixels from the top
-  ///        left corner of the framebuffer.
-  ///
-  virtual ClipCoverage GetClipCoverage(
-      const Entity& entity,
-      const std::optional<Rect>& current_clip_coverage) const;
+  /// @param transform The current transform matrix of the entity that will
+  /// render this contents.
+  virtual bool IsOpaque(const Matrix& transform) const;
 
   //----------------------------------------------------------------------------
   /// @brief Render this contents to a snapshot, respecting the entity's
@@ -124,9 +97,6 @@ class Contents {
       int32_t mip_count = 1,
       const std::string& label = "Snapshot") const;
 
-  virtual bool ShouldRender(const Entity& entity,
-                            const std::optional<Rect> clip_coverage) const;
-
   //----------------------------------------------------------------------------
   /// @brief  Return the color source's intrinsic size, if available.
   ///
@@ -137,18 +107,6 @@ class Contents {
   std::optional<Size> GetColorSourceSize() const;
 
   void SetColorSourceSize(Size size);
-
-  //----------------------------------------------------------------------------
-  /// @brief Whether or not this contents can accept the opacity peephole
-  ///        optimization.
-  ///
-  ///        By default all contents return false. Contents are responsible
-  ///        for determining whether or not their own geometries intersect in
-  ///        a way that makes accepting opacity impossible. It is always safe
-  ///        to return false, especially if computing overlap would be
-  ///        computationally expensive.
-  ///
-  virtual bool CanInheritOpacity(const Entity& entity) const;
 
   //----------------------------------------------------------------------------
   /// @brief Inherit the provided opacity.
@@ -167,12 +125,6 @@ class Contents {
   ///
   virtual std::optional<Color> AsBackgroundColor(const Entity& entity,
                                                  ISize target_size) const;
-
-  //----------------------------------------------------------------------------
-  /// @brief Cast to a filter. Returns `nullptr` if this Contents is not a
-  ///        filter.
-  ///
-  virtual const FilterContents* AsFilter() const;
 
   //----------------------------------------------------------------------------
   /// @brief      If possible, applies a color filter to this contents inputs on

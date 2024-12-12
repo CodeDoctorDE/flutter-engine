@@ -193,15 +193,6 @@ Scalar Matrix::GetDeterminant() const {
   return b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
 }
 
-Scalar Matrix::GetMaxBasisLength() const {
-  Scalar max = 0;
-  for (int i = 0; i < 3; i++) {
-    max = std::max(max,
-                   e[i][0] * e[i][0] + e[i][1] * e[i][1] + e[i][2] * e[i][2]);
-  }
-  return std::sqrt(max);
-}
-
 /*
  *  Adapted for Impeller from Graphics Gems:
  *  http://www.realtimerendering.com/resources/GraphicsGems/gemsii/unmatrix.c
@@ -233,7 +224,7 @@ std::optional<MatrixDecomposition> Matrix::Decompose() const {
 
   perpectiveMatrix.e[3][3] = 1;
 
-  if (perpectiveMatrix.GetDeterminant() == 0.0) {
+  if (!perpectiveMatrix.IsInvertible()) {
     return std::nullopt;
   }
 
@@ -290,7 +281,7 @@ std::optional<MatrixDecomposition> Matrix::Decompose() const {
   /*
    *  Compute X scale factor and normalize first row.
    */
-  result.scale.x = row[0].Length();
+  result.scale.x = row[0].GetLength();
   row[0] = row[0].Normalize();
 
   /*
@@ -302,7 +293,7 @@ std::optional<MatrixDecomposition> Matrix::Decompose() const {
   /*
    *  Compute Y scale and normalize 2nd row.
    */
-  result.scale.y = row[1].Length();
+  result.scale.y = row[1].GetLength();
   row[1] = row[1].Normalize();
   result.shear.xy /= result.scale.y;
 
@@ -317,7 +308,7 @@ std::optional<MatrixDecomposition> Matrix::Decompose() const {
   /*
    *  Next, get Z scale and normalize 3rd row.
    */
-  result.scale.z = row[2].Length();
+  result.scale.z = row[2].GetLength();
   row[2] = row[2].Normalize();
 
   result.shear.xz /= result.scale.z;

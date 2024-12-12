@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'dart:async';
+import 'dart:js_interop';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -11,6 +12,8 @@ import 'package:ui/ui.dart' as ui;
 import 'package:ui/ui_web/src/ui_web.dart' as ui_web;
 
 class SkwasmRenderer implements Renderer {
+  bool get isMultiThreaded => false;
+
   @override
   ui.Path combinePaths(ui.PathOperation op, ui.Path path1, ui.Path path2) {
     throw UnimplementedError('Skwasm not implemented on this platform.');
@@ -27,7 +30,7 @@ class SkwasmRenderer implements Renderer {
   }
 
   @override
-  ui.ImageFilter createBlurImageFilter({double sigmaX = 0.0, double sigmaY = 0.0, ui.TileMode tileMode = ui.TileMode.clamp}) {
+  ui.ImageFilter createBlurImageFilter({double sigmaX = 0.0, double sigmaY = 0.0, ui.TileMode? tileMode}) {
     throw UnimplementedError('Skwasm not implemented on this platform.');
   }
 
@@ -188,5 +191,10 @@ class SkwasmRenderer implements Renderer {
   @override
   ui.Image createImageFromImageBitmap(DomImageBitmap imageSource) {
     throw UnimplementedError('Skwasm not implemented on this platform.');
+  }
+
+  @override
+  ui.Image createImageFromTextureSource(JSAny object,  { required int width, required int height, required bool transferOwnership }) {
+    throw Exception('Skwasm not implemented on this platform.');
   }
 }

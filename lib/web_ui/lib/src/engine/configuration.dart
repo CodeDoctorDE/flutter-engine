@@ -167,7 +167,7 @@ class FlutterConfiguration {
 
   /// Auto detect which rendering backend to use.
   ///
-  /// Using flutter tools option "--web-render=auto" or not specifying one
+  /// Using flutter tools option "--web-renderer=auto" or not specifying one
   /// would set the value to true. Otherwise, it would be false.
   static const bool flutterWebAutoDetect =
       bool.fromEnvironment('FLUTTER_WEB_AUTO_DETECT', defaultValue: true);
@@ -177,10 +177,10 @@ class FlutterConfiguration {
 
   /// Enable the Skia-based rendering backend.
   ///
-  /// Using flutter tools option "--web-render=canvaskit" would set the value to
+  /// Using flutter tools option "--web-renderer=canvaskit" would set the value to
   /// true.
   ///
-  /// Using flutter tools option "--web-render=html" would set the value to false.
+  /// Using flutter tools option "--web-renderer=html" would set the value to false.
   static const bool useSkia = bool.fromEnvironment('FLUTTER_WEB_USE_SKIA');
 
   // Runtime parameters.
@@ -271,6 +271,18 @@ class FlutterConfiguration {
     'FLUTTER_WEB_CANVASKIT_FORCE_CPU_ONLY',
   );
 
+  /// The maximum number of canvases to use when rendering in CanvasKit.
+  ///
+  /// Limits the amount of overlays that can be created.
+  int get canvasKitMaximumSurfaces {
+    final int maxSurfaces =
+        _configuration?.canvasKitMaximumSurfaces?.toInt() ?? 8;
+    if (maxSurfaces < 1) {
+      return 1;
+    }
+    return maxSurfaces;
+  }
+
   /// Set this flag to `true` to cause the engine to visualize the semantics tree
   /// on the screen for debugging.
   ///
@@ -326,11 +338,7 @@ class FlutterConfiguration {
   String get fontFallbackBaseUrl =>
       _configuration?.fontFallbackBaseUrl ?? 'https://fonts.gstatic.com/s/';
 
-  /// Whether to use color emojis or not.
-  ///
-  /// The font used to render color emojis is large (~24MB). This configuration
-  /// gives developers the ability to decide for their app.
-  bool get useColorEmoji => _configuration?.useColorEmoji ?? false;
+  bool get forceSingleThreadedSkwasm => _configuration?.forceSingleThreadedSkwasm ?? false;
 }
 
 @JS('window.flutterConfiguration')
@@ -361,6 +369,11 @@ extension JsFlutterConfigurationExtension on JsFlutterConfiguration {
   external JSBoolean? get _canvasKitForceCpuOnly;
   bool? get canvasKitForceCpuOnly => _canvasKitForceCpuOnly?.toDart;
 
+  @JS('canvasKitMaximumSurfaces')
+  external JSNumber? get _canvasKitMaximumSurfaces;
+  double? get canvasKitMaximumSurfaces =>
+      _canvasKitMaximumSurfaces?.toDartDouble;
+
   @JS('debugShowSemanticsNodes')
   external JSBoolean? get _debugShowSemanticsNodes;
   bool? get debugShowSemanticsNodes => _debugShowSemanticsNodes?.toDart;
@@ -383,9 +396,9 @@ extension JsFlutterConfigurationExtension on JsFlutterConfiguration {
   external JSString? get _fontFallbackBaseUrl;
   String? get fontFallbackBaseUrl => _fontFallbackBaseUrl?.toDart;
 
-  @JS('useColorEmoji')
-  external JSBoolean? get _useColorEmoji;
-  bool? get useColorEmoji => _useColorEmoji?.toDart;
+  @JS('forceSingleThreadedSkwasm')
+  external JSBoolean? get _forceSingleThreadedSkwasm;
+  bool? get forceSingleThreadedSkwasm => _forceSingleThreadedSkwasm?.toDart;
 }
 
 /// A JavaScript entrypoint that allows developer to set rendering backend

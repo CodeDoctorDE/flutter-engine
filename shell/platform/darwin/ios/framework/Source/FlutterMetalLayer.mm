@@ -2,12 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#import "flutter/shell/platform/darwin/ios/framework/Source/FlutterMetalLayer.h"
+
+#include <CoreMedia/CoreMedia.h>
 #include <IOSurface/IOSurfaceObjC.h>
 #include <Metal/Metal.h>
 #include <UIKit/UIKit.h>
 
 #include "flutter/fml/logging.h"
-#import "flutter/shell/platform/darwin/ios/framework/Source/FlutterMetalLayer.h"
+#import "flutter/shell/platform/darwin/common/framework/Headers/FlutterMacros.h"
+
+FLUTTER_ASSERT_ARC
 
 @interface DisplayLinkManager : NSObject
 @property(class, nonatomic, readonly) BOOL maxRefreshRateEnabledOnIPhone;
@@ -46,16 +51,13 @@ extern CFTimeInterval display_link_target;
   BOOL _displayLinkForcedMaxRate;
 }
 
+- (void)onDisplayLink:(CADisplayLink*)link;
 - (void)presentTexture:(FlutterTexture*)texture;
 - (void)returnTexture:(FlutterTexture*)texture;
 
 @end
 
-@interface FlutterTexture : NSObject {
-  id<MTLTexture> _texture;
-  IOSurface* _surface;
-  CFTimeInterval _presentedTime;
-}
+@interface FlutterTexture : NSObject
 
 @property(readonly, nonatomic) id<MTLTexture> texture;
 @property(readonly, nonatomic) IOSurface* surface;
@@ -65,11 +67,6 @@ extern CFTimeInterval display_link_target;
 @end
 
 @implementation FlutterTexture
-
-@synthesize texture = _texture;
-@synthesize surface = _surface;
-@synthesize presentedTime = _presentedTime;
-@synthesize waitingForCompletion;
 
 - (instancetype)initWithTexture:(id<MTLTexture>)texture surface:(IOSurface*)surface {
   if (self = [super init]) {
@@ -159,14 +156,27 @@ extern CFTimeInterval display_link_target;
 
 @end
 
-@implementation FlutterMetalLayer
+@interface FlutterMetalLayerDisplayLinkProxy : NSObject {
+  __weak FlutterMetalLayer* _layer;
+}
 
-@synthesize preferredDevice = _preferredDevice;
-@synthesize device = _device;
-@synthesize pixelFormat = _pixelFormat;
-@synthesize framebufferOnly = _framebufferOnly;
-@synthesize colorspace = _colorspace;
-@synthesize wantsExtendedDynamicRangeContent = _wantsExtendedDynamicRangeContent;
+@end
+
+@implementation FlutterMetalLayerDisplayLinkProxy
+- (instancetype)initWithLayer:(FlutterMetalLayer*)layer {
+  if (self = [super init]) {
+    _layer = layer;
+  }
+  return self;
+}
+
+- (void)onDisplayLink:(CADisplayLink*)link {
+  [_layer onDisplayLink:link];
+}
+
+@end
+
+@implementation FlutterMetalLayer
 
 - (instancetype)init {
   if (self = [super init]) {
@@ -175,7 +185,9 @@ extern CFTimeInterval display_link_target;
     self.pixelFormat = MTLPixelFormatBGRA8Unorm;
     _availableTextures = [[NSMutableSet alloc] init];
 
-    _displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(onDisplayLink:)];
+    FlutterMetalLayerDisplayLinkProxy* proxy =
+        [[FlutterMetalLayerDisplayLinkProxy alloc] initWithLayer:self];
+    _displayLink = [CADisplayLink displayLinkWithTarget:proxy selector:@selector(onDisplayLink:)];
     [self setMaxRefreshRate:DisplayLinkManager.displayRefreshRate forceMax:NO];
     [_displayLink addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
     [[NSNotificationCenter defaultCenter] addObserver:self
@@ -187,6 +199,7 @@ extern CFTimeInterval display_link_target;
 }
 
 - (void)dealloc {
+  [_displayLink invalidate];
   [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
@@ -288,9 +301,9 @@ extern CFTimeInterval display_link_target;
 
   if (self.colorspace != nil) {
     CFStringRef name = CGColorSpaceGetName(self.colorspace);
-    IOSurfaceSetValue(res, CFSTR("IOSurfaceColorSpace"), name);
+    IOSurfaceSetValue(res, kIOSurfaceColorSpace, name);
   } else {
-    IOSurfaceSetValue(res, CFSTR("IOSurfaceColorSpace"), kCGColorSpaceSRGB);
+    IOSurfaceSetValue(res, kIOSurfaceColorSpace, kCGColorSpaceSRGB);
   }
   return (__bridge_transfer IOSurface*)res;
 }
@@ -424,15 +437,14 @@ extern CFTimeInterval display_link_target;
 }
 
 + (BOOL)enabled {
-  static BOOL enabled = NO;
+  static BOOL enabled = YES;
   static BOOL didCheckInfoPlist = NO;
   if (!didCheckInfoPlist) {
     didCheckInfoPlist = YES;
     NSNumber* use_flutter_metal_layer =
         [[NSBundle mainBundle] objectForInfoDictionaryKey:@"FLTUseFlutterMetalLayer"];
-    if (use_flutter_metal_layer != nil && [use_flutter_metal_layer boolValue]) {
-      enabled = YES;
-      FML_LOG(WARNING) << "Using FlutterMetalLayer. This is an experimental feature.";
+    if (use_flutter_metal_layer != nil && ![use_flutter_metal_layer boolValue]) {
+      enabled = NO;
     }
   }
   return enabled;

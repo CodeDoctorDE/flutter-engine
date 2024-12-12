@@ -9,7 +9,7 @@
 #include "flutter/fml/make_copyable.h"
 #include "flutter/fml/synchronization/waitable_event.h"
 #include "flutter/shell/common/vsync_waiter_fallback.h"
-#include "third_party/skia/include/gpu/gl/GrGLInterface.h"
+#include "third_party/skia/include/gpu/ganesh/gl/GrGLInterface.h"
 
 namespace flutter {
 
@@ -32,8 +32,7 @@ void PlatformView::DispatchPlatformMessage(
 
 void PlatformView::DispatchPointerDataPacket(
     std::unique_ptr<PointerDataPacket> packet) {
-  delegate_.OnPlatformViewDispatchPointerDataPacket(
-      pointer_data_packet_converter_.Convert(std::move(packet)));
+  delegate_.OnPlatformViewDispatchPointerDataPacket(std::move(packet));
 }
 
 void PlatformView::DispatchSemanticsAction(int32_t node_id,

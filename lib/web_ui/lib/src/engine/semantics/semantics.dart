@@ -18,15 +18,18 @@ import '../platform_dispatcher.dart';
 import '../util.dart';
 import '../vector_math.dart';
 import '../window.dart';
+import 'accessibility.dart';
 import 'checkable.dart';
-import 'dialog.dart';
 import 'focusable.dart';
+import 'header.dart';
+import 'heading.dart';
 import 'image.dart';
 import 'incrementable.dart';
 import 'label_and_value.dart';
 import 'link.dart';
 import 'live_region.dart';
 import 'platform_view.dart';
+import 'route.dart';
 import 'scrollable.dart';
 import 'semantics_helper.dart';
 import 'tappable.dart';
@@ -231,6 +234,8 @@ class SemanticsNodeUpdate {
     required this.childrenInTraversalOrder,
     required this.childrenInHitTestOrder,
     required this.additionalActions,
+    required this.headingLevel,
+    this.linkUrl,
   });
 
   /// See [ui.SemanticsUpdateBuilder.updateNode].
@@ -331,13 +336,19 @@ class SemanticsNodeUpdate {
 
   /// See [ui.SemanticsUpdateBuilder.updateNode].
   final double thickness;
+
+  /// See [ui.SemanticsUpdateBuilder.updateNode].
+  final int headingLevel;
+
+  /// See [ui.SemanticsUpdateBuilder.updateNode].
+  final String? linkUrl;
 }
 
-/// Identifies [PrimaryRoleManager] implementations.
+/// Identifies [SemanticRole] implementations.
 ///
 /// Each value corresponds to the most specific role a semantics node plays in
 /// the semantics tree.
-enum PrimaryRole {
+enum SemanticRoleKind {
   /// Supports incrementing and/or decrementing its value.
   incrementable,
 
@@ -353,6 +364,10 @@ enum PrimaryRole {
   /// A control that has a checked state, such as a check box or a radio button.
   checkable,
 
+  /// Adds the "heading" ARIA role to the node. The attribute "aria-level" is
+  /// also assigned.
+  heading,
+
   /// Visual only element.
   image,
 
@@ -365,108 +380,96 @@ enum PrimaryRole {
   /// There are 3 possible situations:
   ///
   /// * The node also has the `namesRoute` bit set. This means that the node's
-  ///   `label` describes the dialog, which can be expressed by adding the
+  ///   `label` describes the route, which can be expressed by adding the
   ///   `aria-label` attribute.
   /// * A descendant node has the `namesRoute` bit set. This means that the
-  ///   child's content describes the dialog. The child may simply be labelled,
-  ///   or it may be a subtree of nodes that describe the dialog together. The
+  ///   child's content describes the route. The child may simply be labelled,
+  ///   or it may be a subtree of nodes that describe the route together. The
   ///   nearest HTML equivalent is `aria-describedby`. The child acquires the
   ///   [routeName] role, which manages the relevant ARIA attributes.
   /// * There is no `namesRoute` bit anywhere in the sub-tree rooted at the
-  ///   current node. In this case it's likely not a dialog at all, and the node
+  ///   current node. In this case it's likely not a route at all, and the node
   ///   should not get a label or the "dialog" role. It's just a group of
   ///   children. For example, a modal barrier has `scopesRoute` set but marking
-  ///   it as a dialog would be wrong.
-  dialog,
+  ///   it as a route would be wrong.
+  route,
 
-  /// The node's primary role is to host a platform view.
+  /// The node's role is to host a platform view.
   platformView,
+
+  /// Contains a link.
+  link,
+
+  /// Denotes a header.
+  header,
 
   /// A role used when a more specific role cannot be assigend to
   /// a [SemanticsObject].
   ///
   /// Provides a label or a value.
   generic,
-
-  /// Contains a link.
-  link,
 }
 
-/// Identifies one of the secondary [RoleManager]s of a [PrimaryRoleManager].
-enum Role {
-  /// Supplies generic accessibility focus features to semantics nodes that have
-  /// [ui.SemanticsFlag.isFocusable] set.
-  focusable,
-
-  /// Supplies generic tapping/clicking functionality.
-  tappable,
-
-  /// Provides an `aria-label` from `label`, `value`, and/or `tooltip` values.
-  ///
-  /// The two are combined into the same role because they interact with each
-  /// other.
-  labelAndValue,
-
-  /// Contains a region whose changes will be announced to the screen reader
-  /// without having to be in focus.
-  ///
-  /// These regions can be a snackbar or a text field error. Once identified
-  /// with this role, they will be able to get the assistive technology's
-  /// attention right away.
-  liveRegion,
-
-  /// Provides a description for an ancestor dialog.
-  ///
-  /// This role is assigned to nodes that have `namesRoute` set but not
-  /// `scopesRoute`. When both flags are set the node only gets the dialog
-  /// role (see [dialog]).
-  ///
-  /// If the ancestor dialog is missing, this role does nothing useful.
-  routeName,
-}
-
-/// Responsible for setting the `role` ARIA attribute and for attaching zero or
-/// more secondary [RoleManager]s to a [SemanticsObject].
-abstract class PrimaryRoleManager {
+/// Responsible for setting the `role` ARIA attribute, for attaching
+/// [SemanticBehavior]s, and for supplying behaviors unique to the role.
+abstract class SemanticRole {
   /// Initializes a role for a [semanticsObject] that includes basic
   /// functionality for focus, labels, live regions, and route names.
   ///
   /// If `labelRepresentation` is true, configures the [LabelAndValue] role with
   /// [LabelAndValue.labelRepresentation] set to true.
-  PrimaryRoleManager.withBasics(this.role, this.semanticsObject, { required LeafLabelRepresentation labelRepresentation }) {
+  SemanticRole.withBasics(this.kind, this.semanticsObject, { required LabelRepresentation preferredLabelRepresentation }) {
     element = _initElement(createElement(), semanticsObject);
     addFocusManagement();
     addLiveRegion();
     addRouteName();
-    addLabelAndValue(labelRepresentation: labelRepresentation);
+    addLabelAndValue(preferredRepresentation: preferredLabelRepresentation);
+    addSelectableBehavior();
   }
 
   /// Initializes a blank role for a [semanticsObject].
   ///
   /// Use this constructor for highly specialized cases where
-  /// [RoleManager.withBasics] does not work, for example when the default focus
+  /// [SemanticRole.withBasics] does not work, for example when the default focus
   /// management intereferes with the widget's functionality.
-  PrimaryRoleManager.blank(this.role, this.semanticsObject) {
+  SemanticRole.blank(this.kind, this.semanticsObject) {
     element = _initElement(createElement(), semanticsObject);
   }
 
   late final DomElement element;
 
-  /// The primary role identifier.
-  final PrimaryRole role;
+  /// The kind of the role that this .
+  final SemanticRoleKind kind;
 
   /// The semantics object managed by this role.
   final SemanticsObject semanticsObject;
 
-  /// Secondary role managers, if any.
-  List<RoleManager>? get secondaryRoleManagers => _secondaryRoleManagers;
-  List<RoleManager>? _secondaryRoleManagers;
+  /// The ID of the Flutter View that this [SemanticRole] belongs to.
+  int get viewId => semanticsObject.owner.viewId;
 
-  /// Identifiers of secondary roles used by this primary role manager.
+  /// Whether this role accepts pointer events.
   ///
-  /// This is only meant to be used in tests.
-  @visibleForTesting
-  List<Role> get debugSecondaryRoles => _secondaryRoleManagers?.map((RoleManager manager) => manager.role).toList() ?? const <Role>[];
+  /// This boolean decides whether to set the `pointer-events` CSS property to
+  /// `all` or to `none` on the semantics [element].
+  bool get acceptsPointerEvents {
+    final behaviors = _behaviors;
+    if (behaviors != null) {
+      for (final behavior in behaviors) {
+        if (behavior.acceptsPointerEvents) {
+          return true;
+        }
+      }
+    }
+    // Ignore pointer events on all container nodes.
+    if (semanticsObject.hasChildren) {
+      return false;
+    }
+    return true;
+  }
+
+  /// Semantic behaviors provided by this role, if any.
+  List<SemanticBehavior>? get behaviors => _behaviors;
+  List<SemanticBehavior>? _behaviors;
 
   @protected
   DomElement createElement() => domDocument.createElement('flt-semantics');
@@ -474,7 +477,9 @@ abstract class PrimaryRoleManager {
   static DomElement _initElement(DomElement element, SemanticsObject semanticsObject) {
     // DOM nodes created for semantics objects are positioned absolutely using
     // transforms.
-    element.style.position = 'absolute';
+    element.style
+      ..position = 'absolute'
+      ..overflow = 'visible';
     element.setAttribute('id', 'flt-semantic-node-${semanticsObject.id}');
 
     // The root node has some properties that other nodes do not.
@@ -501,6 +506,20 @@ abstract class PrimaryRoleManager {
     return element;
   }
 
+  /// A lifecycle method called after the DOM [element] for this role is
+  /// initialized, and the association with the corresponding [SemanticsObject]
+  /// established.
+  ///
+  /// Override this method to implement expensive one-time initialization of a
+  /// role's state. It is more efficient to do such work in this method compared
+  /// to [update], because [update] can be called many times during the
+  /// lifecycle of the semantic node.
+  ///
+  /// It is safe to access [element], [semanticsObject], [behaviors]
+  /// and all helper methods that access these fields, such as [append],
+  /// [focusable], etc.
+  void initState() {}
+
   /// Sets the `role` ARIA attribute.
   void setAriaRole(String ariaRoleName) {
     setAttribute('role', ariaRoleName);
@@ -521,47 +540,61 @@ abstract class PrimaryRoleManager {
 
   void removeEventListener(String type, DomEventListener? listener, [bool? useCapture]) => element.removeEventListener(type, listener, useCapture);
 
-  /// Convenience getter for the [Focusable] role manager, if any.
+  /// Convenience getter for the [Focusable] behavior, if any.
   Focusable? get focusable => _focusable;
   Focusable? _focusable;
 
   /// Adds generic focus management features.
   void addFocusManagement() {
-    addSecondaryRole(_focusable = Focusable(semanticsObject, this));
+    addSemanticBehavior(_focusable = Focusable(semanticsObject, this));
   }
 
   /// Adds generic live region features.
   void addLiveRegion() {
-    addSecondaryRole(LiveRegion(semanticsObject, this));
+    addSemanticBehavior(LiveRegion(semanticsObject, this));
   }
 
   /// Adds generic route name features.
   void addRouteName() {
-    addSecondaryRole(RouteName(semanticsObject, this));
+    addSemanticBehavior(RouteName(semanticsObject, this));
   }
 
+  /// Convenience getter for the [LabelAndValue] behavior, if any.
+  LabelAndValue? get labelAndValue => _labelAndValue;
+  LabelAndValue? _labelAndValue;
+
   /// Adds generic label features.
-  void addLabelAndValue({ required LeafLabelRepresentation labelRepresentation }) {
-    addSecondaryRole(LabelAndValue(semanticsObject, this, labelRepresentation: labelRepresentation));
+  void addLabelAndValue({ required LabelRepresentation preferredRepresentation }) {
+    addSemanticBehavior(_labelAndValue = LabelAndValue(semanticsObject, this, preferredRepresentation: preferredRepresentation));
   }
 
   /// Adds generic functionality for handling taps and clicks.
   void addTappable() {
-    addSecondaryRole(Tappable(semanticsObject, this));
+    addSemanticBehavior(Tappable(semanticsObject, this));
   }
 
-  /// Adds a secondary role to this primary role manager.
+  /// Adds the [Selectable] behavior, if the node is selectable but not checkable.
+  void addSelectableBehavior() {
+    // Do not use the [Selectable] behavior on checkables. Checkables use
+    // special ARIA roles and `aria-checked`. Adding `aria-selected` in addition
+    // to `aria-checked` would be confusing.
+    if (semanticsObject.isSelectable && !semanticsObject.isCheckable) {
+      addSemanticBehavior(Selectable(semanticsObject, this));
+    }
+  }
+
+  /// Adds a semantic behavior to this role.
   ///
   /// This method should be called by concrete implementations of
-  /// [PrimaryRoleManager] during initialization.
+  /// [SemanticRole] during initialization.
   @protected
-  void addSecondaryRole(RoleManager secondaryRoleManager) {
+  void addSemanticBehavior(SemanticBehavior behavior) {
     assert(
-      _secondaryRoleManagers?.any((RoleManager manager) => manager.role == secondaryRoleManager.role) != true,
-      'Cannot add secondary role ${secondaryRoleManager.role}. This object already has this secondary role.',
+      _behaviors?.any((existing) => existing.runtimeType == behavior.runtimeType) != true,
+      'Cannot add semantic behavior ${behavior.runtimeType}. This object already has it.',
     );
-    _secondaryRoleManagers ??= <RoleManager>[];
-    _secondaryRoleManagers!.add(secondaryRoleManager);
+    _behaviors ??= <SemanticBehavior>[];
+    _behaviors!.add(behavior);
   }
 
   /// Called immediately after the fields of the [semanticsObject] are updated
@@ -571,20 +604,32 @@ abstract class PrimaryRoleManager {
   /// "is*Dirty" getters to find out exactly what's changed and apply the
   /// minimum DOM updates.
   ///
-  /// The base implementation requests every secondary role manager to update
+  /// The base implementation requests every semantics behavior to update
   /// the object.
   @mustCallSuper
   void update() {
-    final List<RoleManager>? secondaryRoles = _secondaryRoleManagers;
-    if (secondaryRoles == null) {
+    final List<SemanticBehavior>? behaviors = _behaviors;
+    if (behaviors == null) {
       return;
     }
-    for (final RoleManager secondaryRole in secondaryRoles) {
-      secondaryRole.update();
+    for (final SemanticBehavior behavior in behaviors) {
+      behavior.update();
+    }
+
+    if (semanticsObject.isIdentifierDirty) {
+      _updateIdentifier();
     }
   }
 
-  /// Whether this role manager was disposed of.
+  void _updateIdentifier() {
+    if (semanticsObject.hasIdentifier) {
+      setAttribute('flt-semantics-identifier', semanticsObject.identifier!);
+    } else {
+      removeAttribute('flt-semantics-identifier');
+    }
+  }
+
+  /// Whether this role was disposed of.
   bool get isDisposed => _isDisposed;
   bool _isDisposed = false;
 
@@ -602,7 +647,7 @@ abstract class PrimaryRoleManager {
   }
 
   /// Transfers the accessibility focus to the [element] managed by this role
-  /// manager as a result of this node taking focus by default.
+  /// as a result of this node taking focus by default.
   ///
   /// For example, when a dialog pops up it is expected that one of its child
   /// nodes takes accessibility focus.
@@ -612,18 +657,21 @@ abstract class PrimaryRoleManager {
   /// input focus. For example, a plain text node cannot take input focus, but
   /// it can take accessibility focus.
   ///
-  /// Returns `true` if the role manager took the focus. Returns `false` if
-  /// this role manager did not take the focus. The return value can be used to
-  /// decide whether to stop searching for a node that should take focus.
+  /// Returns `true` if the role took the focus. Returns `false` if this role
+  /// did not take the focus. The return value can be used to decide whether to
+  /// stop searching for a node that should take focus.
   bool focusAsRouteDefault();
 }
 
 /// A role used when a more specific role couldn't be assigned to the node.
-final class GenericRole extends PrimaryRoleManager {
+final class GenericRole extends SemanticRole {
   GenericRole(SemanticsObject semanticsObject) : super.withBasics(
-    PrimaryRole.generic,
+    SemanticRoleKind.generic,
     semanticsObject,
-    labelRepresentation: LeafLabelRepresentation.domText,
+    // Prefer sized span because if this is a leaf it is frequently a Text widget.
+    // But if it turns out to be a container, then LabelAndValue will automatically
+    // switch to `aria-label`.
+    preferredLabelRepresentation: LabelRepresentation.sizedSpan,
   ) {
     // Typically a tappable widget would have a more specific role, such as
     // "link", "button", "checkbox", etc. However, there are situations when a
@@ -638,42 +686,35 @@ final class GenericRole extends PrimaryRoleManager {
 
   @override
   void update() {
-    super.update();
-
     if (!semanticsObject.hasLabel) {
       // The node didn't get a more specific role, and it has no label. It is
       // likely that this node is simply there for positioning its children and
       // has no other role for the screen reader to be aware of. In this case,
       // the element does not need a `role` attribute at all.
+      super.update();
       return;
     }
 
-    // Assign one of three roles to the element: heading, group, text.
+    // Assign one of two roles to the element: group or text.
     //
     // - "group" is used when the node has children, irrespective of whether the
     //   node is marked as a header or not. This is because marking a group
     //   as a "heading" will prevent the AT from reaching its children.
-    // - "heading" is used when the framework explicitly marks the node as a
-    //   heading and the node does not have children.
-    // - "text" is used by default.
-    //
-    // As of October 24, 2022, "text" only has effect on Safari. Other browsers
-    // ignore it. Setting role="text" prevents Safari from treating the element
-    // as a "group" or "empty group". Other browsers still announce it as
-    // "group" or "empty group". However, other options considered produced even
-    // worse results, such as:
-    //
-    // - Ignore the size of the element and size the focus ring to the text
-    //   content, which is wrong. The HTML text size is irrelevant because
-    //   Flutter renders into canvas, so the focus ring looks wrong.
-    // - Read out the same label multiple times.
+    // - If a node has a label and no children, assume is a paragraph of text.
+    //   In HTML text has no ARIA role. It's just a DOM node with text inside
+    //   it. Previously, role="text" was used, but it was only supported by
+    //   Safari, and it was removed starting Safari 17.
     if (semanticsObject.hasChildren) {
+      labelAndValue!.preferredRepresentation = LabelRepresentation.ariaLabel;
       setAriaRole('group');
-    } else if (semanticsObject.hasFlag(ui.SemanticsFlag.isHeader)) {
-      setAriaRole('heading');
     } else {
-      setAriaRole('text');
+      labelAndValue!.preferredRepresentation = LabelRepresentation.sizedSpan;
+      removeAttribute('role');
     }
+
+    // Call super.update last so the role is established before applying
+    // specific behaviors.
+    super.update();
   }
 
   @override
@@ -693,44 +734,47 @@ final class GenericRole extends PrimaryRoleManager {
       return false;
     }
 
-    // Case 3: current node is visual/informational. Move just the
-    // accessibility focus.
-
-    // Plain text nodes should not be focusable via keyboard or mouse. They are
-    // only focusable for the purposes of focusing the screen reader. To achieve
-    // this the -1 value is used.
-    //
-    // See also:
-    //
-    // https://developer.mozilla.org/en-US/docs/Web/HTML/Global_attributes/tabindex
-    element.tabIndex = -1;
-    element.focus();
+    // Case 3: current node is visual/informational. Move just the accessibility
+    // focus.
+    labelAndValue!.focusAsRouteDefault();
     return true;
   }
 }
 
 /// Provides a piece of functionality to a [SemanticsObject].
 ///
-/// A secondary role must not set the `role` ARIA attribute. That responsibility
-/// falls on the [PrimaryRoleManager]. One [SemanticsObject] may have more than
-/// one [RoleManager] but an element may only have one ARIA role, so setting the
-/// `role` attribute from a [RoleManager] would cause conflicts.
+/// Semantic behaviors can be shared by multiple types of [SemanticRole]s. For
+/// example, [SemanticButton] and [SemanticCheckable] both use the [Tappable] behavior. If a
+/// semantic role needs bespoke functionality, it is simpler to implement it
+/// directly in the [SemanticRole] implementation.
 ///
-/// The [PrimaryRoleManager] decides the list of [RoleManager]s a given semantics
-/// node should use.
-abstract class RoleManager {
-  /// Initializes a secondary role for [semanticsObject].
+/// A behavior must not set the `role` ARIA attribute. That responsibility
+/// falls on the [SemanticRole]. One [SemanticsObject] may have more than
+/// one [SemanticBehavior] but an element may only have one ARIA role, so
+/// setting the `role` attribute from a [SemanticBehavior] would cause
+/// conflicts.
+///
+/// The [SemanticRole] decides the list of [SemanticBehavior]s a given
+/// semantics node should use.
+abstract class SemanticBehavior {
+  /// Initializes a behavior for the [semanticsObject].
   ///
-  /// A single role object manages exactly one [SemanticsObject].
-  RoleManager(this.role, this.semanticsObject, this.owner);
-
-  /// Role identifier.
-  final Role role;
+  /// A single [SemanticBehavior] object manages exactly one [SemanticsObject].
+  SemanticBehavior(this.semanticsObject, this.owner);
 
   /// The semantics object managed by this role.
   final SemanticsObject semanticsObject;
 
-  final PrimaryRoleManager owner;
+  final SemanticRole owner;
+
+  /// The ID of the Flutter View that this [SemanticBehavior] belongs to.
+  int get viewId => semanticsObject.owner.viewId;
+
+  /// Whether this role accepts pointer events.
+  ///
+  /// This boolean decides whether to set the `pointer-events` CSS property to
+  /// `all` or to `none` on [SemanticsObject.element].
+  bool get acceptsPointerEvents => false;
 
   /// Called immediately after the [semanticsObject] updates some of its fields.
   ///
@@ -739,7 +783,7 @@ abstract class RoleManager {
   /// minimum DOM updates.
   void update();
 
-  /// Whether this role manager was disposed of.
+  /// Whether this behavior was disposed of.
   bool get isDisposed => _isDisposed;
   bool _isDisposed = false;
 
@@ -1084,6 +1128,94 @@ class SemanticsObject {
     _dirtyFields |= _platformViewIdIndex;
   }
 
+  // This field is not exposed publicly because code that applies heading levels
+  // should use [effectiveHeadingLevel] instead.
+  int _headingLevel = 0;
+
+  /// The effective heading level value to be used when rendering this node as
+  /// a heading.
+  ///
+  /// If a heading is rendered from a header, uses heading level 2.
+  int get effectiveHeadingLevel {
+    if (_headingLevel != 0) {
+      return _headingLevel;
+    } else {
+      // This branch may be taken when a heading is rendered from a header,
+      // where the heading level is not provided.
+      return 2;
+    }
+  }
+
+  static const int _headingLevelIndex = 1 << 24;
+
+  /// Whether the [headingLevel] field has been updated but has not been
+  /// applied to the DOM yet.
+  bool get isHeadingLevelDirty => _isDirty(_headingLevelIndex);
+  void _markHeadingLevelDirty() {
+    _dirtyFields |= _headingLevelIndex;
+  }
+
+  /// Whether this object represents a heading.
+  ///
+  /// Typically, a heading is a prominent piece of text that provides a title
+  /// for a section in the UI.
+  ///
+  /// Labeled empty headers are treated as headings too.
+  ///
+  /// See also:
+  ///
+  /// * [isHeader], which also describes the rest of the screen, and is
+  ///   sometimes presented to the user as a heading.
+  bool get isHeading => _headingLevel != 0 || isHeader && hasLabel && !hasChildren;
+
+  /// Whether this object represents a header.
+  ///
+  /// A header is used for one of two purposes:
+  ///
+  /// * Introduce the content of the main screen or a page. In this case, the
+  ///   header is a, possibly labeled, container of widgets that together
+  ///   provide the description of the screen.
+  /// * Provide a heading (like [isHeading]). Native mobile apps do not have a
+  ///   notion of "heading". It is common to mark headings as headers instead
+  ///   and the screen readers will announce "heading". Labeled empty headers
+  ///   are treated as heading by the web engine.
+  ///
+  /// See also:
+  ///
+  ///  * [isHeading], which determines whether this node represents a heading.
+  bool get isHeader => hasFlag(ui.SemanticsFlag.isHeader);
+
+  /// See [ui.SemanticsUpdateBuilder.updateNode].
+  String? get identifier => _identifier;
+  String? _identifier;
+
+  bool get hasIdentifier => _identifier != null && _identifier!.isNotEmpty;
+
+  static const int _identifierIndex = 1 << 25;
+
+  /// Whether the [identifier] field has been updated but has not been
+  /// applied to the DOM yet.
+  bool get isIdentifierDirty => _isDirty(_identifierIndex);
+  void _markIdentifierDirty() {
+    _dirtyFields |= _identifierIndex;
+  }
+
+  /// See [ui.SemanticsUpdateBuilder.updateNode].
+  String? get linkUrl => _linkUrl;
+  String? _linkUrl;
+
+  /// Whether this object contains a non-empty link URL.
+  bool get hasLinkUrl => _linkUrl != null && _linkUrl!.isNotEmpty;
+
+  static const int _linkUrlIndex = 1 << 26;
+
+  /// Whether the [linkUrl] field has been updated but has not been
+  /// applied to the DOM yet.
+  bool get isLinkUrlDirty => _isDirty(_linkUrlIndex);
+  void _markLinkUrlDirty() {
+    _dirtyFields |= _linkUrlIndex;
+  }
+
   /// A unique permanent identifier of the semantics node in the tree.
   final int id;
 
@@ -1103,7 +1235,7 @@ class SemanticsObject {
   bool _isDirty(int fieldIndex) => (_dirtyFields & fieldIndex) != 0;
 
   /// The dom element of this semantics object.
-  DomElement get element => primaryRole!.element;
+  DomElement get element => semanticRole!.element;
 
   /// Returns the HTML element that contains the HTML elements of direct
   /// children of this object.
@@ -1188,7 +1320,7 @@ class SemanticsObject {
   /// Whether this object represents an editable text field.
   bool get isTextField => hasFlag(ui.SemanticsFlag.isTextField);
 
-    /// Whether this object represents an editable text field.
+  /// Whether this object represents an interactive link.
   bool get isLink => hasFlag(ui.SemanticsFlag.isLink);
 
   /// Whether this object needs screen readers attention right away.
@@ -1203,13 +1335,9 @@ class SemanticsObject {
       !isButton;
 
   /// Whether this node defines a scope for a route.
-  ///
-  /// See also [Role.dialog].
   bool get scopesRoute => hasFlag(ui.SemanticsFlag.scopesRoute);
 
   /// Whether this node describes a route.
-  ///
-  /// See also [Role.dialog].
   bool get namesRoute => hasFlag(ui.SemanticsFlag.namesRoute);
 
   /// Whether this object carry enabled/disabled state (and if so whether it is
@@ -1238,6 +1366,11 @@ class SemanticsObject {
     if (_flags != update.flags) {
       _flags = update.flags;
       _markFlagsDirty();
+    }
+
+    if (_identifier != update.identifier) {
+      _identifier = update.identifier;
+      _markIdentifierDirty();
     }
 
     if (_value != update.value) {
@@ -1345,6 +1478,11 @@ class SemanticsObject {
       _markTooltipDirty();
     }
 
+    if (_headingLevel != update.headingLevel) {
+      _headingLevel = update.headingLevel;
+      _markHeadingLevelDirty();
+    }
+
     if (_textDirection != update.textDirection) {
       _textDirection = update.textDirection;
       _markTextDirectionDirty();
@@ -1370,8 +1508,13 @@ class SemanticsObject {
       _markPlatformViewIdDirty();
     }
 
+    if (_linkUrl != update.linkUrl) {
+      _linkUrl = update.linkUrl;
+      _markLinkUrlDirty();
+    }
+
     // Apply updates to the DOM.
-    _updateRoles();
+    _updateRole();
 
     // All properties that affect positioning and sizing are checked together
     // any one of them triggers position and size recomputation.
@@ -1379,10 +1522,7 @@ class SemanticsObject {
       recomputePositionAndSize();
     }
 
-    // Ignore pointer events on all container nodes and all platform view nodes.
-    // This is so that the platform views are not obscured by semantic elements
-    // and can be reached by inspecting the web page.
-    if (!hasChildren && !isPlatformView) {
+    if (semanticRole!.acceptsPointerEvents) {
       element.style.pointerEvents = 'all';
     } else {
       element.style.pointerEvents = 'none';
@@ -1568,83 +1708,92 @@ class SemanticsObject {
     _currentChildrenInRenderOrder = childrenInRenderOrder;
   }
 
-  /// The primary role of this node.
+  /// The role of this node.
   ///
-  /// The primary role is assigned by [updateSelf] based on the combination of
+  /// The role is assigned by [updateSelf] based on the combination of
   /// semantics flags and actions.
-  PrimaryRoleManager? primaryRole;
+  SemanticRole? semanticRole;
 
-  PrimaryRole _getPrimaryRoleIdentifier() {
+  SemanticRoleKind _getSemanticRoleKind() {
     // The most specific role should take precedence.
     if (isPlatformView) {
-      return PrimaryRole.platformView;
+      return SemanticRoleKind.platformView;
+    } else if (isHeading) {
+      // IMPORTANT: because headings also cover certain kinds of headers, the
+      //            `heading` role has precedence over the `header` role.
+      return SemanticRoleKind.heading;
     } else if (isTextField) {
-      return PrimaryRole.textField;
+      return SemanticRoleKind.textField;
     } else if (isIncrementable) {
-      return PrimaryRole.incrementable;
+      return SemanticRoleKind.incrementable;
     } else if (isVisualOnly) {
-      return PrimaryRole.image;
+      return SemanticRoleKind.image;
     } else if (isCheckable) {
-      return PrimaryRole.checkable;
+      return SemanticRoleKind.checkable;
     } else if (isButton) {
-      return PrimaryRole.button;
+      return SemanticRoleKind.button;
     } else if (isScrollContainer) {
-      return PrimaryRole.scrollable;
+      return SemanticRoleKind.scrollable;
     } else if (scopesRoute) {
-      return PrimaryRole.dialog;
+      return SemanticRoleKind.route;
     } else if (isLink) {
-      return PrimaryRole.link;
+      return SemanticRoleKind.link;
+    } else if (isHeader) {
+      return SemanticRoleKind.header;
     } else {
-      return PrimaryRole.generic;
+      return SemanticRoleKind.generic;
     }
   }
 
-  PrimaryRoleManager _createPrimaryRole(PrimaryRole role) {
+  SemanticRole _createSemanticRole(SemanticRoleKind role) {
     return switch (role) {
-      PrimaryRole.textField => TextField(this),
-      PrimaryRole.scrollable => Scrollable(this),
-      PrimaryRole.incrementable => Incrementable(this),
-      PrimaryRole.button => Button(this),
-      PrimaryRole.checkable => Checkable(this),
-      PrimaryRole.dialog => Dialog(this),
-      PrimaryRole.image => ImageRoleManager(this),
-      PrimaryRole.platformView => PlatformViewRoleManager(this),
-      PrimaryRole.link => Link(this),
-      PrimaryRole.generic => GenericRole(this),
+      SemanticRoleKind.textField => SemanticTextField(this),
+      SemanticRoleKind.scrollable => SemanticScrollable(this),
+      SemanticRoleKind.incrementable => SemanticIncrementable(this),
+      SemanticRoleKind.button => SemanticButton(this),
+      SemanticRoleKind.checkable => SemanticCheckable(this),
+      SemanticRoleKind.route => SemanticRoute(this),
+      SemanticRoleKind.image => SemanticImage(this),
+      SemanticRoleKind.platformView => SemanticPlatformView(this),
+      SemanticRoleKind.link => SemanticLink(this),
+      SemanticRoleKind.heading => SemanticHeading(this),
+      SemanticRoleKind.header => SemanticHeader(this),
+      SemanticRoleKind.generic => GenericRole(this),
     };
   }
 
-  /// Detects the roles that this semantics object corresponds to and asks the
-  /// respective role managers to update the DOM.
-  void _updateRoles() {
-    PrimaryRoleManager? currentPrimaryRole = primaryRole;
-    final PrimaryRole roleId = _getPrimaryRoleIdentifier();
-    final DomElement? previousElement = primaryRole?.element;
+  /// Detects the role that this semantics object corresponds to and asks it to
+  /// update the DOM.
+  void _updateRole() {
+    SemanticRole? currentSemanticRole = semanticRole;
+    final SemanticRoleKind kind = _getSemanticRoleKind();
+    final DomElement? previousElement = semanticRole?.element;
 
-    if (currentPrimaryRole != null) {
-      if (currentPrimaryRole.role == roleId) {
-        // Already has a primary role assigned and the role is the same as before,
+    if (currentSemanticRole != null) {
+      if (currentSemanticRole.kind == kind) {
+        // Already has a role assigned and the role is the same as before,
         // so simply perform an update.
-        currentPrimaryRole.update();
+        currentSemanticRole.update();
         return;
       } else {
         // Role changed. This should be avoided as much as possible, but the
         // web engine will attempt a best with the switch by cleaning old ARIA
         // role data and start anew.
-        currentPrimaryRole.dispose();
-        currentPrimaryRole = null;
-        primaryRole = null;
+        currentSemanticRole.dispose();
+        currentSemanticRole = null;
+        semanticRole = null;
       }
     }
 
     // This handles two cases:
-    //  * The node was just created and needs a primary role manager.
-    //  * (Uncommon) the node changed its primary role, its previous primary
-    //    role manager was disposed of, and now it needs a new one.
-    if (currentPrimaryRole == null) {
-      currentPrimaryRole = _createPrimaryRole(roleId);
-      primaryRole = currentPrimaryRole;
-      currentPrimaryRole.update();
+    //  * The node was just created and needs a role.
+    //  * (Uncommon) the node changed its role, its previous role was disposed
+    //    of, and now it needs a new one.
+    if (currentSemanticRole == null) {
+      currentSemanticRole = _createSemanticRole(kind);
+      semanticRole = currentSemanticRole;
+      currentSemanticRole.initState();
+      currentSemanticRole.update();
     }
 
     // Reparent element.
@@ -1676,13 +1825,38 @@ class SemanticsObject {
   /// "hamburger" menu, etc.
   bool get isTappable => hasAction(ui.SemanticsAction.tap);
 
+  /// If true, this node represents something that can be in a "checked" or
+  /// "toggled" state, such as checkboxes, radios, and switches.
+  ///
+  /// Because such widgets require the use of specific ARIA roles and HTML
+  /// elements, they are managed by the [SemanticCheckable] role, and they do
+  /// not use the [Selectable] behavior.
   bool get isCheckable =>
       hasFlag(ui.SemanticsFlag.hasCheckedState) ||
       hasFlag(ui.SemanticsFlag.hasToggledState);
 
+  /// If true, this node represents something that can be annotated as
+  /// "selected", such as a tab, or an item in a list.
+  ///
+  /// Selectability is managed by `aria-selected` and is compatible with
+  /// multiple ARIA roles (tabs, gridcells, options, rows, etc). It is therefore
+  /// mapped onto the [Selectable] behavior.
+  ///
+  /// [Selectable] and [SemanticCheckable] are not used together on the same
+  /// node. [SemanticCheckable] has precendence over [Selectable].
+  ///
+  /// See also:
+  ///
+  ///   * [isSelected], which indicates whether the node is currently selected.
+  bool get isSelectable => hasFlag(ui.SemanticsFlag.hasSelectedState);
+
+  /// If [isSelectable] is true, indicates whether the node is currently
+  /// selected.
+  bool get isSelected => hasFlag(ui.SemanticsFlag.isSelected);
+
   /// Role-specific adjustment of the vertical position of the child container.
   ///
-  /// This is used, for example, by the [Scrollable] to compensate for the
+  /// This is used, for example, by the [SemanticScrollable] to compensate for the
   /// `scrollTop` offset in the DOM.
   ///
   /// This field must not be null.
@@ -1691,7 +1865,7 @@ class SemanticsObject {
   /// Role-specific adjustment of the horizontal position of the child
   /// container.
   ///
-  /// This is used, for example, by the [Scrollable] to compensate for the
+  /// This is used, for example, by the [SemanticScrollable] to compensate for the
   /// `scrollLeft` offset in the DOM.
   ///
   /// This field must not be null.
@@ -1864,10 +2038,12 @@ class SemanticsObject {
   void dispose() {
     assert(!_isDisposed);
     _isDisposed = true;
-    element.remove();
+
+    EnginePlatformDispatcher.instance.viewManager.safeRemoveSync(element);
+
     _parent = null;
-    primaryRole?.dispose();
-    primaryRole = null;
+    semanticRole?.dispose();
+    semanticRole = null;
   }
 }
 
@@ -1909,7 +2085,7 @@ enum SemanticsUpdatePhase {
   idle,
 
   /// Updating individual [SemanticsObject] nodes by calling
-  /// [RoleManager.update] and fixing parent-child relationships.
+  /// [SemanticBehavior.update] and fixing parent-child relationships.
   ///
   /// After this phase is done, the owner enters the [postUpdate] phase.
   updating,
@@ -1918,7 +2094,7 @@ enum SemanticsUpdatePhase {
   ///
   /// At this point all nodes have been updated, the parent child hierarchy has
   /// been established, the DOM tree is in sync with the semantics tree, and
-  /// [RoleManager.dispose] has been called on removed nodes.
+  /// [SemanticBehavior.dispose] has been called on removed nodes.
   ///
   /// After this phase is done, the owner switches back to [idle].
   postUpdate,
@@ -1937,6 +2113,19 @@ class EngineSemantics {
   }
 
   static EngineSemantics? _instance;
+
+  /// The tag name for the accessibility announcements host.
+  static const String announcementsHostTagName = 'flt-announcement-host';
+
+  /// Implements verbal accessibility announcements.
+  final AccessibilityAnnouncements accessibilityAnnouncements =
+      AccessibilityAnnouncements(hostElement: _initializeAccessibilityAnnouncementHost());
+
+  static DomElement _initializeAccessibilityAnnouncementHost() {
+    final DomElement host = createDomElement(announcementsHostTagName);
+    domDocument.body!.append(host);
+    return host;
+  }
 
   /// Disables semantics and uninitializes the singleton [instance].
   ///
@@ -2126,8 +2315,6 @@ class EngineSemantics {
       'mousemove',
       'mouseleave',
       'mouseup',
-      'keyup',
-      'keydown',
     ];
 
     if (pointerEventTypes.contains(event.type)) {
@@ -2200,11 +2387,14 @@ class EngineSemantics {
 
 /// The top-level service that manages everything semantics-related.
 class EngineSemanticsOwner {
-  EngineSemanticsOwner(this.semanticsHost) {
+  EngineSemanticsOwner(this.viewId, this.semanticsHost) {
     registerHotRestartListener(() {
       _rootSemanticsElement?.remove();
     });
   }
+
+  /// The ID of the Flutter View that this semantics owner belongs to.
+  final int viewId;
 
   /// The permanent element in the view's DOM structure that hosts the semantics
   /// tree.
@@ -2511,7 +2701,7 @@ AFTER: $description
 
   /// Declares that a semantics node will explicitly request focus.
   ///
-  /// This prevents others, [Dialog] in particular, from requesting autofocus,
+  /// This prevents others, [SemanticDialog] in particular, from requesting autofocus,
   /// as focus can only be taken by one element. Explicit focus has higher
   /// precedence than autofocus.
   void willRequestFocus() {

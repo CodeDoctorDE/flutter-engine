@@ -99,6 +99,11 @@ skia_library_configs = [
   ":skia_library",
 ]
 
+config("our_vulkan_headers") {
+  include_dirs = [ "include/third_party/vulkan" ]
+  defines = [ "SK_USE_INTERNAL_VULKAN_HEADERS" ]
+}
+
 # Use for CPU-specific Skia code that needs particular compiler flags.
 template("opts") {
   if (invoker.enabled) {
@@ -216,14 +221,11 @@ optional("fontmgr_android") {
 
   deps = [
     ":typeface_freetype",
+    ":typeface_proxy",
     "//flutter/third_party/expat",
   ]
-  public = [ "$_skia_root/include/ports/SkFontMgr_android.h" ]
-  sources = [
-    "$_skia_root/src/ports/SkFontMgr_android.cpp",
-    "$_skia_root/src/ports/SkFontMgr_android_parser.cpp",
-    "$_skia_root/src/ports/SkFontMgr_android_parser.h",
-  ]
+  public = skia_ports_fontmgr_android_public
+  sources = skia_ports_fontmgr_android_sources
 }
 
 optional("fontmgr_custom") {
@@ -232,8 +234,7 @@ optional("fontmgr_custom") {
       skia_enable_fontmgr_custom_embedded || skia_enable_fontmgr_custom_empty
 
   deps = [ ":typeface_freetype" ]
-  public = [ "$_skia_root/src/ports/SkFontMgr_custom.h" ]
-  sources = [ "$_skia_root/src/ports/SkFontMgr_custom.cpp" ]
+  sources = skia_ports_fontmgr_custom_sources
 }
 
 optional("fontmgr_custom_directory") {
@@ -243,8 +244,8 @@ optional("fontmgr_custom_directory") {
     ":fontmgr_custom",
     ":typeface_freetype",
   ]
-  public = [ "$_skia_root/include/ports/SkFontMgr_directory.h" ]
-  sources = [ "$_skia_root/src/ports/SkFontMgr_custom_directory.cpp" ]
+  public = skia_ports_fontmgr_directory_public
+  sources = skia_ports_fontmgr_directory_sources
 }
 
 optional("fontmgr_custom_embedded") {
@@ -255,7 +256,7 @@ optional("fontmgr_custom_embedded") {
     ":fontmgr_custom",
     ":typeface_freetype",
   ]
-  sources = [ "$_skia_root/src/ports/SkFontMgr_custom_embedded.cpp" ]
+  sources = skia_ports_fontmgr_embedded_sources
 }
 
 optional("fontmgr_custom_empty") {
@@ -266,8 +267,13 @@ optional("fontmgr_custom_empty") {
     ":fontmgr_custom",
     ":typeface_freetype",
   ]
-  public = [ "$_skia_root/include/ports/SkFontMgr_empty.h" ]
-  sources = [ "$_skia_root/src/ports/SkFontMgr_custom_empty.cpp" ]
+  public = skia_ports_fontmgr_empty_public
+  sources = skia_ports_fontmgr_empty_sources
+}
+
+skia_source_set("typeface_proxy") {
+  configs = [ ":skia_public" ]
+  sources = skia_ports_typeface_proxy_sources
 }
 
 optional("fontmgr_fontconfig") {
@@ -276,9 +282,12 @@ optional("fontmgr_fontconfig") {
 
   # The public header includes fontconfig.h and uses FcConfig*
   public_deps = [ "//third_party:fontconfig" ]
-  public = [ "$_skia_root/include/ports/SkFontMgr_fontconfig.h" ]
-  deps = [ ":typeface_freetype" ]
-  sources = [ "$_skia_root/src/ports/SkFontMgr_fontconfig.cpp" ]
+  public = skia_ports_fontmgr_fontconfig_public
+  deps = [
+    ":typeface_freetype",
+    ":typeface_proxy",
+  ]
+  sources = skia_ports_fontmgr_fontconfig_sources
 }
 
 optional("fontmgr_fuchsia") {
@@ -292,8 +301,8 @@ optional("fontmgr_fuchsia") {
   } else {
     deps = [ "//sdk/fidl/fuchsia.fonts" ]
   }
-  public = [ "$_skia_root/src/ports/SkFontMgr_fuchsia.h" ]
-  sources = [ "$_skia_root/src/ports/SkFontMgr_fuchsia.cpp" ]
+  public = skia_ports_fontmgr_fuchsia_public
+  sources = skia_ports_fontmgr_fuchsia_sources
 }
 
 optional("fontmgr_mac_ct") {
@@ -303,17 +312,8 @@ optional("fontmgr_mac_ct") {
     "SK_TYPEFACE_FACTORY_CORETEXT",
     "SK_FONTMGR_CORETEXT_AVAILABLE",
   ]
-  public = [
-    "$_skia_root/include/ports/SkFontMgr_mac_ct.h",
-    "$_skia_root/include/ports/SkTypeface_mac.h",
-  ]
-  sources = [
-    "$_skia_root/src/ports/SkFontMgr_mac_ct.cpp",
-    "$_skia_root/src/ports/SkScalerContext_mac_ct.cpp",
-    "$_skia_root/src/ports/SkScalerContext_mac_ct.h",
-    "$_skia_root/src/ports/SkTypeface_mac_ct.cpp",
-    "$_skia_root/src/ports/SkTypeface_mac_ct.h",
-  ]
+  public = skia_ports_fontmgr_coretext_public
+  sources = skia_ports_fontmgr_coretext_sources
 
   if (is_mac) {
     frameworks = [
@@ -342,17 +342,8 @@ optional("fontmgr_win") {
     "SK_TYPEFACE_FACTORY_DIRECTWRITE",
     "SK_FONTMGR_DIRECTWRITE_AVAILABLE",
   ]
-  public = [ "$_skia_root/include/ports/SkTypeface_win.h" ]
-  sources = [
-    "$_skia_root/include/ports/SkFontMgr_indirect.h",
-    "$_skia_root/include/ports/SkRemotableFontMgr.h",
-    "$_skia_root/src/fonts/SkFontMgr_indirect.cpp",
-    "$_skia_root/src/ports/SkFontMgr_win_dw.cpp",
-    "$_skia_root/src/ports/SkScalerContext_win_dw.cpp",
-    "$_skia_root/src/ports/SkScalerContext_win_dw.h",
-    "$_skia_root/src/ports/SkTypeface_win_dw.cpp",
-    "$_skia_root/src/ports/SkTypeface_win_dw.h",
-  ]
+  public = skia_ports_windows_fonts_public
+  sources = skia_ports_windows_fonts_sources
   if (skia_dwritecore_sdk != "") {
     defines = [ "DWRITE_CORE" ]
     if (is_win && is_clang) {
@@ -374,17 +365,21 @@ optional("fontmgr_win") {
 optional("gpu_shared") {
   enabled = skia_enable_ganesh
 
+  configs = []
   deps = []
   libs = []
   public_defines = []
   public_deps = []
   frameworks = []
 
-  sources = skia_shared_gpu_sources + skia_sksl_gpu_sources
+  sources = skia_shared_gpu_sources
+  sources += skia_sksl_pipeline_sources
+  sources += skia_sksl_codegen_sources
 
   if (skia_use_vulkan) {
     public_defines += [ "SK_VULKAN" ]
     sources += skia_shared_vk_sources
+    configs += [ ":our_vulkan_headers" ]
     if (skia_enable_vulkan_debug_layers) {
       public_defines += [ "SK_ENABLE_VK_LAYERS" ]
     }
@@ -401,6 +396,8 @@ optional("gpu_shared") {
 
 optional("gpu") {
   enabled = skia_enable_ganesh
+
+  configs = []
   deps = [ ":gpu_shared" ]
   public_defines = []
   public_configs = []
@@ -429,6 +426,7 @@ optional("gpu") {
       if (defined(ndk_api) && ndk_api >= 26) {
         libs += [ "android" ]
       }
+      public_defines += [ "SK_EGL" ]
     } else if (skia_use_webgl) {
       sources += [
         "$_skia_root/src/gpu/ganesh/gl/webgl/GrGLMakeNativeInterface_webgl.cpp",
@@ -439,13 +437,21 @@ optional("gpu") {
         "$_skia_root/src/gpu/ganesh/gl/glx/GrGLMakeNativeInterface_glx.cpp",
       ]
       libs += [ "GL" ]
+      public_defines += [ "SK_GLX" ]
+    } else if (is_mac) {
+      sources += [
+        "$_skia_root/src/gpu/ganesh/gl/mac/GrGLMakeNativeInterface_mac.cpp",
+      ]
+    } else if (is_ios) {
+      sources += [
+        "$_skia_root/src/gpu/ganesh/gl/iOS/GrGLMakeNativeInterface_iOS.cpp",
+      ]
     } else if (is_win) {
       sources += [
         "$_skia_root/src/gpu/ganesh/gl/win/GrGLMakeNativeInterface_win.cpp",
+        "$_skia_root/src/gpu/ganesh/gl/win/GrGLMakeWinInterface.cpp",
       ]
-      if (target_cpu != "arm64") {
-        libs += [ "OpenGL32.lib" ]
-      }
+      libs += [ "OpenGL32.lib" ]
     } else {
       sources +=
           [ "$_skia_root/src/gpu/ganesh/gl/GrGLMakeNativeInterface_none.cpp" ]
@@ -457,6 +463,7 @@ optional("gpu") {
   if (skia_use_vulkan) {
     public += skia_gpu_vk_public
     sources += skia_gpu_vk_private
+    configs += [ ":our_vulkan_headers" ]
     if (is_fuchsia) {
       public_deps += [ "${fuchsia_sdk}/pkg/vulkan" ]
     }
@@ -499,6 +506,7 @@ optional("jpeg_decode") {
   sources = [
     "$_skia_root/src/codec/SkJpegCodec.cpp",
     "$_skia_root/src/codec/SkJpegDecoderMgr.cpp",
+    "$_skia_root/src/codec/SkJpegMetadataDecoderImpl.cpp",
     "$_skia_root/src/codec/SkJpegSourceMgr.cpp",
     "$_skia_root/src/codec/SkJpegUtility.cpp",
   ]
@@ -506,6 +514,7 @@ optional("jpeg_decode") {
 
 optional("jpeg_encode") {
   enabled = skia_use_libjpeg_turbo_encode && !skia_use_ndk_images
+  public_defines = [ "SK_CODEC_ENCODES_JPEG" ]
 
   deps = [ "//flutter/third_party/libjpeg-turbo:libjpeg" ]
   public = skia_encode_jpeg_public
@@ -530,24 +539,27 @@ optional("xps") {
   sources = skia_xps_sources
 }
 
-optional("png_decode") {
+optional("png_decode_libpng") {
   enabled = skia_use_libpng_decode
   public_defines = [
     "SK_CODEC_DECODES_PNG",
     "SK_CODEC_DECODES_ICO",
+    "SK_CODEC_DECODES_PNG_WITH_LIBPNG",
   ]
 
   deps = [ "//flutter/third_party/libpng" ]
-  sources = [
-    "$_skia_root/src/codec/SkIcoCodec.cpp",
-    "$_skia_root/src/codec/SkPngCodec.cpp",
-  ]
+  sources = [ "$_skia_root/src/codec/SkIcoCodec.cpp" ] + skia_codec_png_base +
+            skia_codec_libpng_srcs
 }
 
 optional("png_encode") {
   enabled = skia_use_libpng_encode && !skia_use_ndk_images
-  public = skia_encode_png_public
+  public_defines = [
+    "SK_CODEC_ENCODES_PNG",
+    "SK_CODEC_ENCODES_PNG_WITH_LIBPNG",
+  ]
 
+  public = skia_encode_png_public
   deps = [ "//flutter/third_party/libpng" ]
   sources = skia_encode_png_srcs
 }
@@ -557,11 +569,7 @@ optional("typeface_freetype") {
 
   public_defines = [ "SK_TYPEFACE_FACTORY_FREETYPE" ]
   deps = [ "//flutter/third_party/freetype2" ]
-  sources = [
-    "$_skia_root/src/ports/SkFontHost_FreeType.cpp",
-    "$_skia_root/src/ports/SkFontHost_FreeType_common.cpp",
-    "$_skia_root/src/ports/SkFontHost_FreeType_common.h",
-  ]
+  sources = skia_ports_freetype_sources
 }
 
 optional("webp_decode") {
@@ -574,6 +582,7 @@ optional("webp_decode") {
 
 optional("webp_encode") {
   enabled = skia_use_libwebp_encode && !skia_use_ndk_images
+  public_defines = [ "SK_CODEC_ENCODES_WEBP" ]
   public = skia_encode_webp_public
 
   deps = [ "//flutter/third_party/libwebp" ]
@@ -632,7 +641,7 @@ skia_component("skia") {
     ":hsw",
     ":jpeg_decode",
     ":ndk_images",
-    ":png_decode",
+    ":png_decode_libpng",
     ":webp_decode",
     ":wuffs",
     ":xml",
@@ -652,22 +661,20 @@ skia_component("skia") {
   sources += skia_effects_sources
   sources += skia_colorfilters_sources
   sources += skia_effects_imagefilter_sources
-  sources += skia_codec_core
+  sources += skia_codec_shared
   sources += skia_codec_decode_bmp
   sources += skia_encode_srcs
-  sources += skia_sksl_sources
+  sources += skia_sksl_core_sources
+  sources += skia_sksl_core_module_sources
+  sources += skia_ports_sources
   sources += [
     "$_skia_root/src/android/SkAndroidFrameworkUtils.cpp",
     "$_skia_root/src/android/SkAnimatedImage.cpp",
     "$_skia_root/src/codec/SkAndroidCodec.cpp",
     "$_skia_root/src/codec/SkAndroidCodecAdapter.cpp",
-    "$_skia_root/src/codec/SkEncodedInfo.cpp",
-    "$_skia_root/src/codec/SkParseEncodedOrigin.cpp",
     "$_skia_root/src/codec/SkSampledCodec.cpp",
     "$_skia_root/src/ports/SkDiscardableMemory_none.cpp",
-    "$_skia_root/src/ports/SkGlobalInitialization_default.cpp",
     "$_skia_root/src/ports/SkMemory_malloc.cpp",
-    "$_skia_root/src/ports/SkOSFile_stdio.cpp",
     "$_skia_root/src/sfnt/SkOTTable_name.cpp",
     "$_skia_root/src/sfnt/SkOTUtils.cpp",
   ]
@@ -686,11 +693,10 @@ skia_component("skia") {
   }
 
   if (is_win) {
+    sources += skia_ports_windows_sources
     sources += [
       "$_skia_root/src/ports/SkDebug_win.cpp",
       "$_skia_root/src/ports/SkImageGeneratorWIC.cpp",
-      "$_skia_root/src/ports/SkOSFile_win.cpp",
-      "$_skia_root/src/ports/SkOSLibrary_win.cpp",
     ]
     libs += [
       "Ole32.lib",
@@ -705,10 +711,7 @@ skia_component("skia") {
       ]
     }
   } else {
-    sources += [
-      "$_skia_root/src/ports/SkOSFile_posix.cpp",
-      "$_skia_root/src/ports/SkOSLibrary_posix.cpp",
-    ]
+    sources += [ "$_skia_root/src/ports/SkOSFile_posix.cpp" ]
     libs += [ "dl" ]
   }
 

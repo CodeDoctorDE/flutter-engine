@@ -19,7 +19,7 @@
 namespace impeller {
 
 /// Approximately the same size as the max frames in flight.
-static const constexpr size_t kHostBufferArenaSize = 3u;
+static const constexpr size_t kHostBufferArenaSize = 4u;
 
 /// The host buffer class manages one more 1024 Kb blocks of device buffer
 /// allocations.
@@ -28,12 +28,10 @@ static const constexpr size_t kHostBufferArenaSize = 3u;
 class HostBuffer {
  public:
   static std::shared_ptr<HostBuffer> Create(
-      const std::shared_ptr<Allocator>& allocator);
+      const std::shared_ptr<Allocator>& allocator,
+      const std::shared_ptr<const IdleWaiter>& idle_waiter);
 
-  // |Buffer|
-  virtual ~HostBuffer();
-
-  void SetLabel(std::string label);
+  ~HostBuffer();
 
   //----------------------------------------------------------------------------
   /// @brief      Emplace uniform data onto the host buffer. Ensure that backend
@@ -84,6 +82,7 @@ class HostBuffer {
   ///             host buffer.
   ///
   /// @param[in]  buffer        The buffer data.
+  /// @param[in]  alignment     Minimum alignment of the data being emplaced.
   ///
   /// @tparam     BufferType    The type of the buffer data.
   ///
@@ -91,10 +90,11 @@ class HostBuffer {
   ///
   template <class BufferType,
             class = std::enable_if_t<std::is_standard_layout_v<BufferType>>>
-  [[nodiscard]] BufferView Emplace(const BufferType& buffer) {
-    return Emplace(reinterpret_cast<const void*>(&buffer),  // buffer
-                   sizeof(BufferType),                      // size
-                   alignof(BufferType)                      // alignment
+  [[nodiscard]] BufferView Emplace(const BufferType& buffer,
+                                   size_t alignment = 0) {
+    return Emplace(reinterpret_cast<const void*>(&buffer),   // buffer
+                   sizeof(BufferType),                       // size
+                   std::max(alignment, alignof(BufferType))  // alignment
     );
   }
 
@@ -134,36 +134,41 @@ class HostBuffer {
   TestStateQuery GetStateForTest();
 
  private:
-  [[nodiscard]] std::tuple<Range, std::shared_ptr<DeviceBuffer>>
+  [[nodiscard]] std::tuple<Range, std::shared_ptr<DeviceBuffer>, DeviceBuffer*>
   EmplaceInternal(const void* buffer, size_t length);
 
-  std::tuple<Range, std::shared_ptr<DeviceBuffer>>
+  std::tuple<Range, std::shared_ptr<DeviceBuffer>, DeviceBuffer*>
   EmplaceInternal(size_t length, size_t align, const EmplaceProc& cb);
 
-  std::tuple<Range, std::shared_ptr<DeviceBuffer>>
+  std::tuple<Range, std::shared_ptr<DeviceBuffer>, DeviceBuffer*>
   EmplaceInternal(const void* buffer, size_t length, size_t align);
 
   size_t GetLength() const { return offset_; }
 
-  void MaybeCreateNewBuffer();
+  /// Attempt to create a new internal buffer if the existing capacity is not
+  /// sufficient.
+  ///
+  /// A false return value indicates an unrecoverable allocation failure.
+  [[nodiscard]] bool MaybeCreateNewBuffer();
 
   const std::shared_ptr<DeviceBuffer>& GetCurrentBuffer() const;
 
   [[nodiscard]] BufferView Emplace(const void* buffer, size_t length);
 
-  explicit HostBuffer(const std::shared_ptr<Allocator>& allocator);
+  explicit HostBuffer(const std::shared_ptr<Allocator>& allocator,
+                      const std::shared_ptr<const IdleWaiter>& idle_waiter);
 
   HostBuffer(const HostBuffer&) = delete;
 
   HostBuffer& operator=(const HostBuffer&) = delete;
 
   std::shared_ptr<Allocator> allocator_;
+  std::shared_ptr<const IdleWaiter> idle_waiter_;
   std::array<std::vector<std::shared_ptr<DeviceBuffer>>, kHostBufferArenaSize>
       device_buffers_;
   size_t current_buffer_ = 0u;
   size_t offset_ = 0u;
   size_t frame_index_ = 0u;
-  std::string label_;
 };
 
 }  // namespace impeller

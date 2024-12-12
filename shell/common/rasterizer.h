@@ -25,9 +25,9 @@
 #include "flutter/fml/time/time_delta.h"
 #include "flutter/fml/time/time_point.h"
 #if IMPELLER_SUPPORTS_RENDERING
-#include "impeller/aiks/aiks_context.h"  // nogncheck
-#include "impeller/core/formats.h"       // nogncheck
-#include "impeller/renderer/context.h"   // nogncheck
+#include "impeller/core/formats.h"               // nogncheck
+#include "impeller/display_list/aiks_context.h"  // nogncheck
+#include "impeller/renderer/context.h"           // nogncheck
 #include "impeller/typographer/backends/skia/typographer_context_skia.h"  // nogncheck
 #endif  // IMPELLER_SUPPORTS_RENDERING
 #include "flutter/lib/ui/snapshot_delegate.h"
@@ -38,7 +38,7 @@
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkRect.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 
 #if !IMPELLER_SUPPORTS_RENDERING
 namespace impeller {
@@ -643,11 +643,21 @@ class Rasterizer final : public SnapshotDelegate,
       const SkImageInfo& image_info) override;
 
   // |SnapshotDelegate|
-  sk_sp<DlImage> MakeRasterSnapshot(sk_sp<DisplayList> display_list,
-                                    SkISize picture_size) override;
+  void MakeRasterSnapshot(
+      sk_sp<DisplayList> display_list,
+      SkISize picture_size,
+      std::function<void(sk_sp<DlImage>)> callback) override;
+
+  // |SnapshotDelegate|
+  sk_sp<DlImage> MakeRasterSnapshotSync(sk_sp<DisplayList> display_list,
+                                        SkISize picture_size) override;
 
   // |SnapshotDelegate|
   sk_sp<SkImage> ConvertToRasterImage(sk_sp<SkImage> image) override;
+
+  // |SnapshotDelegate|
+  void CacheRuntimeStage(
+      const std::shared_ptr<impeller::RuntimeStage>& runtime_stage) override;
 
   // |Stopwatch::Delegate|
   /// Time limit for a smooth frame.
@@ -737,7 +747,7 @@ class Rasterizer final : public SnapshotDelegate,
 
   bool is_torn_down_ = false;
   Delegate& delegate_;
-  MakeGpuImageBehavior gpu_image_behavior_;
+  [[maybe_unused]] MakeGpuImageBehavior gpu_image_behavior_;
   std::weak_ptr<impeller::Context> impeller_context_;
   std::unique_ptr<Surface> surface_;
   std::unique_ptr<SnapshotSurfaceProducer> snapshot_surface_producer_;

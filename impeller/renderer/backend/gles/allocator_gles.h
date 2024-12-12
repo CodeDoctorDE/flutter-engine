@@ -5,7 +5,6 @@
 #ifndef FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_ALLOCATOR_GLES_H_
 #define FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_ALLOCATOR_GLES_H_
 
-#include "flutter/fml/macros.h"
 #include "impeller/core/allocator.h"
 #include "impeller/renderer/backend/gles/reactor_gles.h"
 
@@ -19,10 +18,10 @@ class AllocatorGLES final : public Allocator {
  private:
   friend class ContextGLES;
 
-  ReactorGLES::Ref reactor_;
+  std::shared_ptr<ReactorGLES> reactor_;
   bool is_valid_ = false;
 
-  explicit AllocatorGLES(ReactorGLES::Ref reactor);
+  explicit AllocatorGLES(std::shared_ptr<ReactorGLES> reactor);
 
   // |Allocator|
   bool IsValid() const;

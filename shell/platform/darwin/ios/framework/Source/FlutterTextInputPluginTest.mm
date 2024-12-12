@@ -237,7 +237,7 @@ FLUTTER_ASSERT_ARC
   @autoreleasepool {
     FlutterEngine* flutterEngine = OCMClassMock([FlutterEngine class]);
     weakFlutterEngine = flutterEngine;
-    NSAssert(weakFlutterEngine, @"flutter engine must not be nil");
+    XCTAssertNotNil(weakFlutterEngine, @"flutter engine must not be nil");
     FlutterTextInputPlugin* flutterTextInputPlugin = [[FlutterTextInputPlugin alloc]
         initWithDelegate:(id<FlutterTextInputDelegate>)flutterEngine];
     weakFlutterTextInputPlugin = flutterTextInputPlugin;
@@ -254,8 +254,8 @@ FLUTTER_ASSERT_ARC
     currentView = flutterTextInputPlugin.activeView;
   }
 
-  NSAssert(!weakFlutterEngine, @"flutter engine must be nil");
-  NSAssert(currentView, @"current view must not be nil");
+  XCTAssertNil(weakFlutterEngine, @"flutter engine must be nil");
+  XCTAssertNotNil(currentView, @"current view must not be nil");
 
   XCTAssertNil(weakFlutterTextInputPlugin);
   // Verify that the view can no longer access the deallocated engine/text input plugin
@@ -305,6 +305,20 @@ FLUTTER_ASSERT_ARC
 
   // Verify keyboardType is set to the value specified in config.
   XCTAssertEqual(inputView.keyboardType, UIKeyboardTypeURL);
+}
+
+- (void)testKeyboardTypeWebSearch {
+  NSDictionary* config = self.mutableTemplateCopy;
+  [config setValue:@{@"name" : @"TextInputType.webSearch"} forKey:@"inputType"];
+  [self setClientId:123 configuration:config];
+
+  // Find all the FlutterTextInputViews we created.
+  NSArray<FlutterTextInputView*>* inputFields = self.installedInputViews;
+
+  FlutterTextInputView* inputView = inputFields[0];
+
+  // Verify keyboardType is set to the value specified in config.
+  XCTAssertEqual(inputView.keyboardType, UIKeyboardTypeWebSearch);
 }
 
 - (void)testVisiblePasswordUseAlphanumeric {
@@ -525,6 +539,19 @@ FLUTTER_ASSERT_ARC
   UITextRange* range = [FlutterTextRange rangeWithNSRange:NSMakeRange(0, 30)];
   NSString* substring = [inputView textInRange:range];
   XCTAssertEqualObjects(substring, @"bbbbaaaabbbbaaaa");
+}
+
+- (void)testCanPerformActionForSelectActions {
+  NSDictionary* config = self.mutableTemplateCopy;
+  [self setClientId:123 configuration:config];
+  NSArray<FlutterTextInputView*>* inputFields = self.installedInputViews;
+  FlutterTextInputView* inputView = inputFields[0];
+
+  XCTAssertFalse([inputView canPerformAction:@selector(selectAll:) withSender:nil]);
+
+  [inputView insertText:@"aaaa"];
+
+  XCTAssertTrue([inputView canPerformAction:@selector(selectAll:) withSender:nil]);
 }
 
 - (void)testDeletingBackward {
@@ -821,8 +848,10 @@ FLUTTER_ASSERT_ARC
 
 - (void)testFlutterTextInputViewOnlyRespondsToInsertionPointColorBelowIOS17 {
   FlutterTextInputView* inputView = [[FlutterTextInputView alloc] initWithOwner:textInputPlugin];
-  BOOL respondsToInsertionPointColor =
-      [inputView respondsToSelector:@selector(insertionPointColor)];
+  // [UITextInputTraits insertionPointColor] is non-public API, so @selector(insertionPointColor)
+  // would generate a compile-time warning.
+  SEL insertionPointColor = NSSelectorFromString(@"insertionPointColor");
+  BOOL respondsToInsertionPointColor = [inputView respondsToSelector:insertionPointColor];
   if (@available(iOS 17, *)) {
     XCTAssertFalse(respondsToInsertionPointColor);
   } else {
@@ -2845,6 +2874,117 @@ FLUTTER_ASSERT_ARC
                            result:^(id _Nullable result){
                            }];
   XCTAssertNil(activeView.superview, @"activeView must be removed from view hierarchy.");
+}
+
+- (void)testEditMenu_shouldSetupEditMenuDelegateCorrectly {
+  if (@available(iOS 16.0, *)) {
+    FlutterTextInputView* inputView = [[FlutterTextInputView alloc] initWithOwner:textInputPlugin];
+    [UIApplication.sharedApplication.keyWindow addSubview:inputView];
+    XCTAssertEqual(inputView.editMenuInteraction.delegate, inputView,
+                   @"editMenuInteraction setup delegate correctly");
+  }
+}
+
+- (void)testEditMenu_shouldNotPresentEditMenuIfNotFirstResponder {
+  if (@available(iOS 16.0, *)) {
+    FlutterTextInputPlugin* myInputPlugin =
+        [[FlutterTextInputPlugin alloc] initWithDelegate:OCMClassMock([FlutterEngine class])];
+    BOOL shownEditMenu = [myInputPlugin showEditMenu:@{}];
+    XCTAssertFalse(shownEditMenu, @"Should not show edit menu if not first responder.");
+  }
+}
+
+- (void)testEditMenu_shouldPresentEditMenuWithCorrectConfiguration {
+  if (@available(iOS 16.0, *)) {
+    FlutterTextInputPlugin* myInputPlugin =
+        [[FlutterTextInputPlugin alloc] initWithDelegate:OCMClassMock([FlutterEngine class])];
+    FlutterViewController* myViewController = [[FlutterViewController alloc] init];
+    myInputPlugin.viewController = myViewController;
+    [myViewController loadView];
+    FlutterMethodCall* setClientCall =
+        [FlutterMethodCall methodCallWithMethodName:@"TextInput.setClient"
+                                          arguments:@[ @(123), self.mutableTemplateCopy ]];
+    [myInputPlugin handleMethodCall:setClientCall
+                             result:^(id _Nullable result){
+                             }];
+
+    FlutterTextInputView* myInputView = myInputPlugin.activeView;
+    FlutterTextInputView* mockInputView = OCMPartialMock(myInputView);
+
+    OCMStub([mockInputView isFirstResponder]).andReturn(YES);
+
+    XCTestExpectation* expectation = [[XCTestExpectation alloc]
+        initWithDescription:@"presentEditMenuWithConfiguration must be called."];
+
+    id mockInteraction = OCMClassMock([UIEditMenuInteraction class]);
+    OCMStub([mockInputView editMenuInteraction]).andReturn(mockInteraction);
+    OCMStub([mockInteraction presentEditMenuWithConfiguration:[OCMArg any]])
+        .andDo(^(NSInvocation* invocation) {
+          // arguments are released once invocation is released.
+          [invocation retainArguments];
+          UIEditMenuConfiguration* config;
+          [invocation getArgument:&config atIndex:2];
+          XCTAssertEqual(config.preferredArrowDirection, UIEditMenuArrowDirectionAutomatic,
+                         @"UIEditMenuConfiguration must use automatic arrow direction.");
+          XCTAssert(CGPointEqualToPoint(config.sourcePoint, CGPointZero),
+                    @"UIEditMenuConfiguration must have the correct point.");
+          [expectation fulfill];
+        });
+
+    NSDictionary<NSString*, NSNumber*>* encodedTargetRect =
+        @{@"x" : @(0), @"y" : @(0), @"width" : @(0), @"height" : @(0)};
+
+    BOOL shownEditMenu = [myInputPlugin showEditMenu:@{@"targetRect" : encodedTargetRect}];
+    XCTAssertTrue(shownEditMenu, @"Should show edit menu with correct configuration.");
+    [self waitForExpectations:@[ expectation ] timeout:1.0];
+  }
+}
+
+- (void)testEditMenu_shouldPresentEditMenuWithCorectTargetRect {
+  if (@available(iOS 16.0, *)) {
+    FlutterTextInputPlugin* myInputPlugin =
+        [[FlutterTextInputPlugin alloc] initWithDelegate:OCMClassMock([FlutterEngine class])];
+    FlutterViewController* myViewController = [[FlutterViewController alloc] init];
+    myInputPlugin.viewController = myViewController;
+    [myViewController loadView];
+
+    FlutterMethodCall* setClientCall =
+        [FlutterMethodCall methodCallWithMethodName:@"TextInput.setClient"
+                                          arguments:@[ @(123), self.mutableTemplateCopy ]];
+    [myInputPlugin handleMethodCall:setClientCall
+                             result:^(id _Nullable result){
+                             }];
+
+    FlutterTextInputView* myInputView = myInputPlugin.activeView;
+
+    FlutterTextInputView* mockInputView = OCMPartialMock(myInputView);
+    OCMStub([mockInputView isFirstResponder]).andReturn(YES);
+
+    XCTestExpectation* expectation = [[XCTestExpectation alloc]
+        initWithDescription:@"presentEditMenuWithConfiguration must be called."];
+
+    id mockInteraction = OCMClassMock([UIEditMenuInteraction class]);
+    OCMStub([mockInputView editMenuInteraction]).andReturn(mockInteraction);
+    OCMStub([mockInteraction presentEditMenuWithConfiguration:[OCMArg any]])
+        .andDo(^(NSInvocation* invocation) {
+          [expectation fulfill];
+        });
+
+    myInputView.frame = CGRectMake(10, 20, 30, 40);
+    NSDictionary<NSString*, NSNumber*>* encodedTargetRect =
+        @{@"x" : @(100), @"y" : @(200), @"width" : @(300), @"height" : @(400)};
+
+    BOOL shownEditMenu = [myInputPlugin showEditMenu:@{@"targetRect" : encodedTargetRect}];
+    XCTAssertTrue(shownEditMenu, @"Should show edit menu with correct configuration.");
+    [self waitForExpectations:@[ expectation ] timeout:1.0];
+
+    CGRect targetRect =
+        [myInputView editMenuInteraction:mockInteraction
+              targetRectForConfiguration:OCMClassMock([UIEditMenuConfiguration class])];
+    // the encoded target rect is in global coordinate space.
+    XCTAssert(CGRectEqualToRect(targetRect, CGRectMake(90, 180, 300, 400)),
+              @"targetRectForConfiguration must return the correct target rect.");
+  }
 }
 
 - (void)testInteractiveKeyboardAfterUserScrollWillResignFirstResponder {

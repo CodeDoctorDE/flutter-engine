@@ -6,8 +6,8 @@ import 'package:args/command_runner.dart';
 import 'package:engine_build_configs/engine_build_configs.dart';
 
 import '../environment.dart';
-import '../logger.dart';
 import 'build_command.dart';
+import 'cleanup_command.dart';
 import 'fetch_command.dart';
 import 'flags.dart';
 import 'format_command.dart';
@@ -25,9 +25,20 @@ final class ToolCommandRunner extends CommandRunner<int> {
   ToolCommandRunner({
     required this.environment,
     required this.configs,
-    this.verbose = false,
-  }) : super(toolName, toolDescription, usageLineLength: _usageLineLength) {
+    this.help = false,
+  }) : super(
+          'et',
+          ''
+              'A command line tool for working on '
+              'the Flutter Engine.\n\nThis is a community supported project, '
+              'for more information see https://flutter.dev/to/et.',
+          usageLineLength: _usageLineLength,
+        ) {
     final List<Command<int>> commands = <Command<int>>[
+      CleanupCommand(
+        environment: environment,
+        usageLineLength: _usageLineLength,
+      ),
       FetchCommand(
         environment: environment,
         usageLineLength: _usageLineLength,
@@ -39,19 +50,18 @@ final class ToolCommandRunner extends CommandRunner<int> {
       QueryCommand(
         environment: environment,
         configs: configs,
-        verbose: verbose,
+        help: help,
         usageLineLength: _usageLineLength,
       ),
       BuildCommand(
         environment: environment,
         configs: configs,
-        verbose: verbose,
+        help: help,
         usageLineLength: _usageLineLength,
       ),
       RunCommand(
         environment: environment,
         configs: configs,
-        verbose: verbose,
         usageLineLength: _usageLineLength,
       ),
       LintCommand(
@@ -61,7 +71,7 @@ final class ToolCommandRunner extends CommandRunner<int> {
       TestCommand(
         environment: environment,
         configs: configs,
-        verbose: verbose,
+        help: help,
         usageLineLength: _usageLineLength,
       ),
     ];
@@ -75,37 +85,30 @@ final class ToolCommandRunner extends CommandRunner<int> {
     );
   }
 
-  /// The name of the tool as reported in the tool's usage and help
-  /// messages.
-  static const String toolName = 'et';
-
-  /// The description of the tool reported in the tool's usage and help
-  /// messages.
-  static const String toolDescription = 'A command line tool for working on '
-      'the Flutter Engine.';
-
   /// The host system environment.
   final Environment environment;
 
   /// Build configurations loaded from the engine from under ci/builders.
   final Map<String, BuilderConfig> configs;
 
-  /// Whether et should emit verbose logs.
-  final bool verbose;
+  /// Whether the invocation is for a help command
+  final bool help;
 
   @override
   Future<int> run(Iterable<String> args) async {
-    if (verbose) {
-      environment.logger.level = Logger.infoLevel;
-    }
     try {
       return await runCommand(parse(args)) ?? 0;
-    } on FormatException catch (e) {
-      environment.logger.error(e);
+    } on FormatException catch (e, s) {
+      environment.logger.error('$e\n$s');
       return 1;
     } on UsageException catch (e) {
       environment.logger.error(e);
       return 1;
     }
+  }
+
+  @override
+  void printUsage() {
+    environment.logger.status(usage);
   }
 }

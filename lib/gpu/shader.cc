@@ -39,17 +39,20 @@ fml::RefPtr<Shader> Shader::Make(
     std::string entrypoint,
     impeller::ShaderStage stage,
     std::shared_ptr<fml::Mapping> code_mapping,
-    std::shared_ptr<impeller::VertexDescriptor> vertex_desc,
+    std::vector<impeller::ShaderStageIOSlot> inputs,
+    std::vector<impeller::ShaderStageBufferLayout> layouts,
     std::unordered_map<std::string, UniformBinding> uniform_structs,
-    std::unordered_map<std::string, impeller::SampledImageSlot>
-        uniform_textures) {
+    std::unordered_map<std::string, TextureBinding> uniform_textures,
+    std::vector<impeller::DescriptorSetLayout> descriptor_set_layouts) {
   auto shader = fml::MakeRefCounted<Shader>();
   shader->entrypoint_ = std::move(entrypoint);
   shader->stage_ = stage;
   shader->code_mapping_ = std::move(code_mapping);
-  shader->vertex_desc_ = std::move(vertex_desc);
+  shader->inputs_ = std::move(inputs);
+  shader->layouts_ = std::move(layouts);
   shader->uniform_structs_ = std::move(uniform_structs);
   shader->uniform_textures_ = std::move(uniform_textures);
+  shader->descriptor_set_layouts_ = std::move(descriptor_set_layouts);
   return shader;
 }
 
@@ -83,13 +86,20 @@ bool Shader::RegisterSync(Context& context) {
   return true;
 }
 
-std::shared_ptr<impeller::VertexDescriptor> Shader::GetVertexDescriptor()
+std::shared_ptr<impeller::VertexDescriptor> Shader::CreateVertexDescriptor()
     const {
-  return vertex_desc_;
+  auto vertex_descriptor = std::make_shared<impeller::VertexDescriptor>();
+  vertex_descriptor->SetStageInputs(inputs_, layouts_);
+  return vertex_descriptor;
 }
 
 impeller::ShaderStage Shader::GetShaderStage() const {
   return stage_;
+}
+
+const std::vector<impeller::DescriptorSetLayout>&
+Shader::GetDescriptorSetLayouts() const {
+  return descriptor_set_layouts_;
 }
 
 const Shader::UniformBinding* Shader::GetUniformStruct(
@@ -101,7 +111,7 @@ const Shader::UniformBinding* Shader::GetUniformStruct(
   return &uniform->second;
 }
 
-const impeller::SampledImageSlot* Shader::GetUniformTexture(
+const Shader::TextureBinding* Shader::GetUniformTexture(
     const std::string& name) const {
   auto uniform = uniform_textures_.find(name);
   if (uniform == uniform_textures_.end()) {

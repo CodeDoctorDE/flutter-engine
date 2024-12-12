@@ -16,8 +16,33 @@
 #include "flutter/shell/platform/linux/public/flutter_linux/fl_method_channel.h"
 #include "flutter/shell/platform/linux/public/flutter_linux/fl_standard_method_codec.h"
 #include "flutter/shell/platform/linux/testing/fl_test.h"
-#include "flutter/shell/platform/linux/testing/mock_binary_messenger_response_handle.h"
 #include "flutter/shell/platform/linux/testing/mock_renderer.h"
+
+G_DECLARE_FINAL_TYPE(FlFakeBinaryMessengerResponseHandle,
+                     fl_fake_binary_messenger_response_handle,
+                     FL,
+                     FAKE_BINARY_MESSENGER_RESPONSE_HANDLE,
+                     FlBinaryMessengerResponseHandle)
+
+struct _FlFakeBinaryMessengerResponseHandle {
+  FlBinaryMessengerResponseHandle parent_instance;
+};
+
+G_DEFINE_TYPE(FlFakeBinaryMessengerResponseHandle,
+              fl_fake_binary_messenger_response_handle,
+              fl_binary_messenger_response_handle_get_type());
+
+static void fl_fake_binary_messenger_response_handle_class_init(
+    FlFakeBinaryMessengerResponseHandleClass* klass) {}
+
+static void fl_fake_binary_messenger_response_handle_init(
+    FlFakeBinaryMessengerResponseHandle* self) {}
+
+FlFakeBinaryMessengerResponseHandle*
+fl_fake_binary_messenger_response_handle_new() {
+  return FL_FAKE_BINARY_MESSENGER_RESPONSE_HANDLE(
+      g_object_new(fl_fake_binary_messenger_response_handle_get_type(), NULL));
+}
 
 G_DECLARE_FINAL_TYPE(FlFakeBinaryMessenger,
                      fl_fake_binary_messenger,
@@ -55,7 +80,7 @@ static gboolean send_message_cb(gpointer user_data) {
   g_autoptr(GBytes) message = g_bytes_new(text, strlen(text));
   self->message_handler(FL_BINARY_MESSENGER(self), "CHANNEL", message,
                         FL_BINARY_MESSENGER_RESPONSE_HANDLE(
-                            fl_mock_binary_messenger_response_handle_new()),
+                            fl_fake_binary_messenger_response_handle_new()),
                         self->message_handler_user_data);
 
   return FALSE;
@@ -83,7 +108,7 @@ static gboolean send_response(FlBinaryMessenger* messenger,
                               GError** error) {
   FlFakeBinaryMessenger* self = FL_FAKE_BINARY_MESSENGER(messenger);
 
-  EXPECT_TRUE(FL_IS_MOCK_BINARY_MESSENGER_RESPONSE_HANDLE(response_handle));
+  EXPECT_TRUE(FL_IS_FAKE_BINARY_MESSENGER_RESPONSE_HANDLE(response_handle));
 
   g_autofree gchar* text =
       g_strndup(static_cast<const gchar*>(g_bytes_get_data(response, nullptr)),
@@ -235,7 +260,7 @@ TEST(FlBinaryMessengerTest, FakeMessengerReceive) {
 // Checks sending nullptr for a message works.
 TEST(FlBinaryMessengerTest, SendNullptrMessage) {
   g_autoptr(FlEngine) engine = make_mock_engine();
-  FlBinaryMessenger* messenger = fl_binary_messenger_new(engine);
+  g_autoptr(FlBinaryMessenger) messenger = fl_binary_messenger_new(engine);
   fl_binary_messenger_send_on_channel(messenger, "test/echo", nullptr, nullptr,
                                       nullptr, nullptr);
 }
@@ -243,7 +268,7 @@ TEST(FlBinaryMessengerTest, SendNullptrMessage) {
 // Checks sending a zero length message works.
 TEST(FlBinaryMessengerTest, SendEmptyMessage) {
   g_autoptr(FlEngine) engine = make_mock_engine();
-  FlBinaryMessenger* messenger = fl_binary_messenger_new(engine);
+  g_autoptr(FlBinaryMessenger) messenger = fl_binary_messenger_new(engine);
   g_autoptr(GBytes) message = g_bytes_new(nullptr, 0);
   fl_binary_messenger_send_on_channel(messenger, "test/echo", message, nullptr,
                                       nullptr, nullptr);
@@ -272,7 +297,7 @@ TEST(FlBinaryMessengerTest, SendMessage) {
   g_autoptr(GMainLoop) loop = g_main_loop_new(nullptr, 0);
 
   g_autoptr(FlEngine) engine = make_mock_engine();
-  FlBinaryMessenger* messenger = fl_binary_messenger_new(engine);
+  g_autoptr(FlBinaryMessenger) messenger = fl_binary_messenger_new(engine);
   const char* text = "Hello World!";
   g_autoptr(GBytes) message = g_bytes_new(text, strlen(text));
   fl_binary_messenger_send_on_channel(messenger, "test/echo", message, nullptr,
@@ -302,7 +327,7 @@ TEST(FlBinaryMessengerTest, NullptrResponse) {
   g_autoptr(GMainLoop) loop = g_main_loop_new(nullptr, 0);
 
   g_autoptr(FlEngine) engine = make_mock_engine();
-  FlBinaryMessenger* messenger = fl_binary_messenger_new(engine);
+  g_autoptr(FlBinaryMessenger) messenger = fl_binary_messenger_new(engine);
   const char* text = "Hello World!";
   g_autoptr(GBytes) message = g_bytes_new(text, strlen(text));
   fl_binary_messenger_send_on_channel(messenger, "test/nullptr-response",
@@ -331,7 +356,7 @@ TEST(FlBinaryMessengerTest, SendFailure) {
   g_autoptr(GMainLoop) loop = g_main_loop_new(nullptr, 0);
 
   g_autoptr(FlEngine) engine = make_mock_engine();
-  FlBinaryMessenger* messenger = fl_binary_messenger_new(engine);
+  g_autoptr(FlBinaryMessenger) messenger = fl_binary_messenger_new(engine);
   fl_binary_messenger_send_on_channel(messenger, "test/failure", nullptr,
                                       nullptr, failure_response_cb, loop);
 
@@ -384,7 +409,7 @@ TEST(FlBinaryMessengerTest, ReceiveMessage) {
   g_autoptr(GMainLoop) loop = g_main_loop_new(nullptr, 0);
 
   g_autoptr(FlEngine) engine = make_mock_engine();
-  FlBinaryMessenger* messenger = fl_binary_messenger_new(engine);
+  g_autoptr(FlBinaryMessenger) messenger = fl_binary_messenger_new(engine);
 
   // Listen for messages from the engine.
   fl_binary_messenger_set_message_handler_on_channel(
@@ -448,7 +473,7 @@ TEST(FlBinaryMessengerTest, ResizeChannel) {
   EXPECT_TRUE(fl_engine_start(engine, &error));
   EXPECT_EQ(error, nullptr);
 
-  FlBinaryMessenger* messenger = fl_binary_messenger_new(engine);
+  g_autoptr(FlBinaryMessenger) messenger = fl_binary_messenger_new(engine);
   fl_binary_messenger_resize_channel(messenger, "flutter/test", 3);
 
   EXPECT_TRUE(called);
@@ -494,7 +519,7 @@ TEST(FlBinaryMessengerTest, WarnsOnOverflowChannel) {
   EXPECT_TRUE(fl_engine_start(engine, &error));
   EXPECT_EQ(error, nullptr);
 
-  FlBinaryMessenger* messenger = fl_binary_messenger_new(engine);
+  g_autoptr(FlBinaryMessenger) messenger = fl_binary_messenger_new(engine);
   fl_binary_messenger_set_warns_on_channel_overflow(messenger, "flutter/test",
                                                     false);
 
@@ -511,7 +536,7 @@ static gboolean quit_main_loop_cb(gpointer user_data) {
 TEST(FlBinaryMessengerTest, ControlChannelErrorResponse) {
   g_autoptr(GMainLoop) loop = g_main_loop_new(nullptr, 0);
   g_autoptr(FlEngine) engine = make_mock_engine();
-  FlBinaryMessenger* messenger = fl_binary_messenger_new(engine);
+  g_autoptr(FlBinaryMessenger) messenger = fl_binary_messenger_new(engine);
 
   g_autoptr(GError) error = nullptr;
   EXPECT_TRUE(fl_engine_start(engine, &error));
@@ -608,7 +633,7 @@ TEST(FlBinaryMessengerTest, RespondOnBackgroundThread) {
   g_autoptr(GMainLoop) loop = g_main_loop_new(nullptr, 0);
 
   g_autoptr(FlEngine) engine = make_mock_engine();
-  FlBinaryMessenger* messenger = fl_binary_messenger_new(engine);
+  g_autoptr(FlBinaryMessenger) messenger = fl_binary_messenger_new(engine);
 
   // Listen for messages from the engine.
   fl_binary_messenger_set_message_handler_on_channel(
@@ -634,7 +659,7 @@ static void kill_handler_notify_cb(gpointer was_called) {
 
 TEST(FlBinaryMessengerTest, DeletingEngineClearsHandlers) {
   FlEngine* engine = make_mock_engine();
-  g_autoptr(FlBinaryMessenger) messenger = fl_binary_messenger_new(engine);
+  FlBinaryMessenger* messenger = fl_engine_get_binary_messenger(engine);
   gboolean was_killed = FALSE;
 
   // Listen for messages from the engine.

@@ -27,7 +27,7 @@ abstract class ViewRasterizer {
   final RenderQueue queue = RenderQueue();
 
   /// The size of the current frame being rasterized.
-  ui.Size currentFrameSize = ui.Size.zero;
+  BitmapSize currentFrameSize = BitmapSize.zero;
 
   /// The context which is persisted between frames.
   final CompositorContext context = CompositorContext();
@@ -50,17 +50,26 @@ abstract class ViewRasterizer {
       return;
     }
 
-    currentFrameSize = frameSize;
+    // The [frameSize] may be slightly imprecise if the `devicePixelRatio` isn't
+    // an integer. For example, is you zoom to 110% in Chrome on a Macbook, the
+    // `devicePixelRatio` is `2.200000047683716`, so when the physical size is
+    // computed by multiplying the logical size by the device pixel ratio, the
+    // result is slightly imprecise as well. Nevertheless, the number should
+    // be close to an integer, so round the frame size to be more precice.
+    final BitmapSize bitmapSize = BitmapSize.fromSize(frameSize);
+
+    currentFrameSize = bitmapSize;
     prepareToDraw();
     viewEmbedder.frameSize = currentFrameSize;
-    final CkPictureRecorder pictureRecorder = CkPictureRecorder();
-    pictureRecorder.beginRecording(ui.Offset.zero & currentFrameSize);
-    final Frame compositorFrame =
-        context.acquireFrame(pictureRecorder.recordingCanvas!, viewEmbedder);
+    final Frame compositorFrame = context.acquireFrame(viewEmbedder);
 
-    compositorFrame.raster(layerTree, ignoreRasterCache: true);
+    compositorFrame.raster(
+      layerTree,
+      currentFrameSize,
+      ignoreRasterCache: true,
+    );
 
-    await viewEmbedder.submitFrame(pictureRecorder.endRecording());
+    await viewEmbedder.submitFrame();
   }
 
   /// Do some initialization to prepare to draw a frame.

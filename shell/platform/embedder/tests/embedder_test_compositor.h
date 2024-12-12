@@ -11,7 +11,7 @@
 #include "flutter/fml/macros.h"
 #include "flutter/shell/platform/embedder/embedder.h"
 #include "flutter/shell/platform/embedder/tests/embedder_test_backingstore_producer.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 
 namespace flutter {
 namespace testing {
@@ -29,8 +29,9 @@ class EmbedderTestCompositor {
 
   virtual ~EmbedderTestCompositor();
 
-  void SetBackingStoreProducer(
-      std::unique_ptr<EmbedderTestBackingStoreProducer> backingstore_producer);
+  virtual void SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType type,
+      FlutterSoftwarePixelFormat software_pixfmt) = 0;
 
   bool CreateBackingStore(const FlutterBackingStoreConfig* config,
                           FlutterBackingStore* backing_store_out);
@@ -43,6 +44,8 @@ class EmbedderTestCompositor {
 
   void SetPlatformViewRendererCallback(
       const PlatformViewRendererCallback& callback);
+
+  sk_sp<SkSurface> GetSurface(const FlutterBackingStore* backing_store) const;
 
   //----------------------------------------------------------------------------
   /// @brief      Allows tests to install a callback to notify them when the

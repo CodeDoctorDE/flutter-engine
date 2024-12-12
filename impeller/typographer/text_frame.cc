@@ -3,8 +3,24 @@
 // found in the LICENSE file.
 
 #include "impeller/typographer/text_frame.h"
+#include "impeller/geometry/scalar.h"
+#include "impeller/typographer/font.h"
+#include "impeller/typographer/font_glyph_pair.h"
 
 namespace impeller {
+
+namespace {
+static bool TextPropertiesEquals(const std::optional<GlyphProperties>& a,
+                                 const std::optional<GlyphProperties>& b) {
+  if (!a.has_value() && !b.has_value()) {
+    return true;
+  }
+  if (a.has_value() && b.has_value()) {
+    return GlyphProperties::Equal{}(a.value(), b.value());
+  }
+  return false;
+}
+}  // namespace
 
 TextFrame::TextFrame() = default;
 
@@ -30,62 +46,111 @@ GlyphAtlas::Type TextFrame::GetAtlasType() const {
                     : GlyphAtlas::Type::kAlphaBitmap;
 }
 
-bool TextFrame::MaybeHasOverlapping() const {
-  if (runs_.size() > 1) {
-    return true;
-  }
-  auto glyph_positions = runs_[0].GetGlyphPositions();
-  if (glyph_positions.size() > 10) {
-    return true;
-  }
-  if (glyph_positions.size() == 1) {
-    return false;
-  }
-  // To avoid quadradic behavior the overlapping is checked against an
-  // accumulated bounds rect. This gives faster but less precise information
-  // on text runs.
-  auto first_position = glyph_positions[0];
-  auto overlapping_rect = Rect::MakeOriginSize(
-      first_position.position + first_position.glyph.bounds.GetOrigin(),
-      first_position.glyph.bounds.GetSize());
-  for (auto i = 1u; i < glyph_positions.size(); i++) {
-    auto glyph_position = glyph_positions[i];
-    auto glyph_rect = Rect::MakeOriginSize(
-        glyph_position.position + glyph_position.glyph.bounds.GetOrigin(),
-        glyph_position.glyph.bounds.GetSize());
-    auto intersection = glyph_rect.Intersection(overlapping_rect);
-    if (intersection.has_value()) {
-      return true;
-    }
-    overlapping_rect = overlapping_rect.Union(glyph_rect);
-  }
-  return false;
+bool TextFrame::HasColor() const {
+  return has_color_;
 }
 
 // static
-Scalar TextFrame::RoundScaledFontSize(Scalar scale, Scalar point_size) {
-  return std::round(scale * 100) / 100;
+Scalar TextFrame::RoundScaledFontSize(Scalar scale) {
+  // An arbitrarily chosen maximum text scale to ensure that regardless of the
+  // CTM, a glyph will fit in the atlas. If we clamp significantly, this may
+  // reduce fidelity but is preferable to the alternative of failing to render.
+  constexpr Scalar kMaximumTextScale = 48;
+  Scalar result = std::round(scale * 100) / 100;
+  return std::clamp(result, 0.0f, kMaximumTextScale);
 }
 
-void TextFrame::CollectUniqueFontGlyphPairs(FontGlyphMap& glyph_map,
-                                            Scalar scale) const {
-  for (const TextRun& run : GetRuns()) {
-    const Font& font = run.GetFont();
-    auto rounded_scale =
-        RoundScaledFontSize(scale, font.GetMetrics().point_size);
-    auto& set = glyph_map[{font, rounded_scale}];
-    for (const TextRun::GlyphPosition& glyph_position :
-         run.GetGlyphPositions()) {
-#if false
-// Glyph size error due to RoundScaledFontSize usage above.
-if (rounded_scale != scale) {
-  auto delta = std::abs(rounded_scale - scale);
-  FML_LOG(ERROR) << glyph_position.glyph.bounds.size * delta;
-}
-#endif
-      set.insert(glyph_position.glyph);
-    }
+static constexpr Scalar ComputeFractionalPosition(Scalar value) {
+  value += 0.125;
+  value = (value - floorf(value));
+  if (value < 0.25) {
+    return 0;
   }
+  if (value < 0.5) {
+    return 0.25;
+  }
+  if (value < 0.75) {
+    return 0.5;
+  }
+  return 0.75;
+}
+
+// Compute subpixel position for glyphs based on X position and provided
+// max basis length (scale).
+// This logic is based on the SkPackedGlyphID logic in SkGlyph.h
+// static
+Point TextFrame::ComputeSubpixelPosition(
+    const TextRun::GlyphPosition& glyph_position,
+    AxisAlignment alignment,
+    Point offset,
+    Scalar scale) {
+  Point pos = glyph_position.position + offset;
+  switch (alignment) {
+    case AxisAlignment::kNone:
+      return Point(0, 0);
+    case AxisAlignment::kX:
+      return Point(ComputeFractionalPosition(pos.x * scale), 0);
+    case AxisAlignment::kY:
+      return Point(0, ComputeFractionalPosition(pos.y * scale));
+    case AxisAlignment::kAll:
+      return Point(ComputeFractionalPosition(pos.x * scale),
+                   ComputeFractionalPosition(pos.y * scale));
+  }
+}
+
+void TextFrame::SetPerFrameData(Scalar scale,
+                                Point offset,
+                                std::optional<GlyphProperties> properties) {
+  if (!ScalarNearlyEqual(scale_, scale) ||
+      !ScalarNearlyEqual(offset_.x, offset.x) ||
+      !ScalarNearlyEqual(offset_.y, offset.y) ||
+      !TextPropertiesEquals(properties_, properties)) {
+    bound_values_.clear();
+  }
+  scale_ = scale;
+  offset_ = offset;
+  properties_ = properties;
+}
+
+Scalar TextFrame::GetScale() const {
+  return scale_;
+}
+
+Point TextFrame::GetOffset() const {
+  return offset_;
+}
+
+std::optional<GlyphProperties> TextFrame::GetProperties() const {
+  return properties_;
+}
+
+void TextFrame::AppendFrameBounds(const FrameBounds& frame_bounds) {
+  bound_values_.push_back(frame_bounds);
+}
+
+void TextFrame::ClearFrameBounds() {
+  bound_values_.clear();
+}
+
+bool TextFrame::IsFrameComplete() const {
+  size_t run_size = 0;
+  for (const auto& x : runs_) {
+    run_size += x.GetGlyphCount();
+  }
+  return bound_values_.size() == run_size;
+}
+
+const FrameBounds& TextFrame::GetFrameBounds(size_t index) const {
+  return bound_values_[index];
+}
+
+std::pair<size_t, intptr_t> TextFrame::GetAtlasGenerationAndID() const {
+  return std::make_pair(generation_, atlas_id_);
+}
+
+void TextFrame::SetAtlasGeneration(size_t value, intptr_t atlas_id) {
+  generation_ = value;
+  atlas_id_ = atlas_id;
 }
 
 }  // namespace impeller

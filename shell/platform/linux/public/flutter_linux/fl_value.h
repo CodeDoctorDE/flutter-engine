@@ -61,7 +61,6 @@ typedef struct _FlValue FlValue;
  */
 typedef enum {
   // Parts of the public API, so fixing the names is a breaking change.
-  // NOLINTBEGIN(readability-identifier-naming)
   FL_VALUE_TYPE_NULL,
   FL_VALUE_TYPE_BOOL,
   FL_VALUE_TYPE_INT,
@@ -75,7 +74,6 @@ typedef enum {
   FL_VALUE_TYPE_MAP,
   FL_VALUE_TYPE_FLOAT32_LIST,
   FL_VALUE_TYPE_CUSTOM,
-  // NOLINTEND(readability-identifier-naming)
 } FlValueType;
 
 /**
@@ -228,7 +226,7 @@ FlValue* fl_value_new_float_list(const double* value, size_t value_length);
  *   g_autoptr(FlValue) value = fl_value_new_list ();
  *   fl_value_append_take (value, fl_value_new_string ("one");
  *   fl_value_append_take (value, fl_value_new_int (2);
- *   fl_value_append_take (value, fl_value_new_double (3.0);
+ *   fl_value_append_take (value, fl_value_new_float (3.0);
  * ]|
  *
  * This value can be decoded using:

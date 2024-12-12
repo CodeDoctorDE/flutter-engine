@@ -6,6 +6,7 @@
 //
 // Run with --help for usage.
 
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:args/args.dart';
@@ -39,6 +40,7 @@ enum MessageType {
 }
 
 enum FormatCheck {
+  dart,
   gn,
   java,
   python,
@@ -52,6 +54,8 @@ FormatCheck nameToFormatCheck(String name) {
   switch (name) {
     case 'clang':
       return FormatCheck.clang;
+    case 'dart':
+      return FormatCheck.dart;
     case 'gn':
       return FormatCheck.gn;
     case 'java':
@@ -71,6 +75,8 @@ String formatCheckToName(FormatCheck check) {
   switch (check) {
     case FormatCheck.clang:
       return 'C++/ObjC/Shader';
+    case FormatCheck.dart:
+      return 'Dart';
     case FormatCheck.gn:
       return 'GN';
     case FormatCheck.java:
@@ -86,8 +92,7 @@ String formatCheckToName(FormatCheck check) {
 
 List<String> formatCheckNames() {
   return FormatCheck.values
-      .map<String>((FormatCheck check) =>
-          check.toString().replaceFirst('$FormatCheck.', ''))
+      .map<String>((FormatCheck check) => check.name)
       .toList();
 }
 
@@ -137,6 +142,14 @@ abstract class FormatChecker {
           baseGitRef: baseGitRef,
           repoDir: repoDir,
           srcDir: srcDir,
+          allFiles: allFiles,
+          messageCallback: messageCallback,
+        );
+      case FormatCheck.dart:
+        return DartFormatChecker(
+          processManager: processManager,
+          baseGitRef: baseGitRef,
+          repoDir: repoDir,
           allFiles: allFiles,
           messageCallback: messageCallback,
         );
@@ -312,17 +325,15 @@ class ClangFormatChecker extends FormatChecker {
     super.allFiles,
     super.messageCallback,
   }) {
-    /*late*/ String clangOs;
-    if (Platform.isLinux) {
-      clangOs = 'linux-x64';
-    } else if (Platform.isMacOS) {
-      clangOs = 'mac-x64';
-    } else if (Platform.isWindows) {
-      clangOs = 'windows-x64';
-    } else {
-      throw FormattingException(
-          "Unknown operating system: don't know how to run clang-format here.");
-    }
+    final clangOs = switch (Abi.current()) {
+      Abi.linuxArm64 => 'linux-arm64',
+      Abi.linuxX64 => 'linux-x64',
+      Abi.macosArm64 => 'mac-arm64',
+      Abi.macosX64 => 'mac-x64',
+      Abi.windowsX64 => 'windows-x64',
+      (_) => throw FormattingException(
+          "Unknown operating system: don't know how to run clang-format here.")
+    };
     clangFormat = File(
       path.join(
         srcDir.absolute.path,
@@ -461,7 +472,7 @@ class ClangFormatChecker extends FormatChecker {
   }
 }
 
-/// Checks the format of Java files uing the Google Java format checker.
+/// Checks the format of Java files using the Google Java format checker.
 class JavaFormatChecker extends FormatChecker {
   JavaFormatChecker({
     super.processManager,
@@ -475,6 +486,7 @@ class JavaFormatChecker extends FormatChecker {
       path.absolute(
         path.join(
           srcDir.absolute.path,
+          'flutter',
           'third_party',
           'android_tools',
           'google-java-format',
@@ -482,13 +494,39 @@ class JavaFormatChecker extends FormatChecker {
         ),
       ),
     );
+    // Use java from the checkout to avoid contributors needing to install java.
+    final File hermetic = hermeticJava(srcDir);
+    // If for some reason the hermetic java doesn't exist, fall back to the system java.
+    javaExe = hermetic.existsSync() ? hermetic.path : 'java';
   }
 
+  /// Returns the path to the java executable in the flutter repository.
+  static File hermeticJava(Directory srcDir) {
+    final List<String> javaPath = <String>[
+      srcDir.absolute.path,
+      'flutter',
+      'third_party',
+      'java',
+      'openjdk',
+    ];
+    if (Platform.isMacOS) {
+      javaPath.add('Contents');
+      javaPath.add('Home');
+    }
+    javaPath.add('bin');
+    javaPath.add(Platform.isWindows ? 'java.exe' : 'java');
+    return File(path.joinAll(javaPath));
+  }
+
+  late final String javaExe;
   late final File googleJavaFormatJar;
+
+  // String to return if java formatting cant check java code for any reson.
+  static const String _javaFormatErrorString = 'Java Formatting Error';
 
   Future<String> _getGoogleJavaFormatVersion() async {
     final ProcessRunnerResult result = await _processRunner
-        .runProcess(<String>['java', '-jar', googleJavaFormatJar.path, '--version']);
+        .runProcess(<String>[javaExe, '-jar', googleJavaFormatJar.path, '--version']);
     return result.stderr.trim();
   }
 
@@ -506,12 +544,18 @@ class JavaFormatChecker extends FormatChecker {
     if (failures.isEmpty) {
       return true;
     }
-    return applyPatch(failures);
+    if (failures.length == 1 && failures.first == _javaFormatErrorString) {
+      // _javaFormatErrorString is a string that indicates java formatting failed
+      // without creating a patch that can be applied.
+      return false;
+    } else {
+      return applyPatch(failures);
+    }
   }
 
   Future<String> _getJavaVersion() async {
     final ProcessRunnerResult result =
-        await _processRunner.runProcess(<String>['java', '-version']);
+        await _processRunner.runProcess(<String>[javaExe, '-version']);
     return result.stderr.trim().split('\n')[0];
   }
 
@@ -528,14 +572,19 @@ class JavaFormatChecker extends FormatChecker {
     try {
       javaVersion = await _getJavaVersion();
     } on ProcessRunnerException {
-      error('Cannot run Java, skipping Java file formatting!');
-      return const <String>[];
+      if (!_processRunner.processManager.canRun(javaExe)) {
+        error('Cannot find Java ($javaExe). '
+        'Skipping Java format check.');
+        return const <String>[_javaFormatErrorString];
+      }
+      error('Cannot run Java ($javaExe), skipping Java file formatting!');
+      return const <String>[_javaFormatErrorString];
     }
     try {
       javaFormatVersion = await _getGoogleJavaFormatVersion();
     } on ProcessRunnerException {
       error('Cannot find google-java-format, skipping Java format check.');
-      return const <String>[];
+      return const <String>[_javaFormatErrorString];
     }
     if (verbose) {
       message('Using $javaFormatVersion with Java $javaVersion');
@@ -546,7 +595,7 @@ class JavaFormatChecker extends FormatChecker {
       }
       formatJobs.add(
         WorkerJob(
-          <String>['java', '-jar', googleJavaFormatJar.path, file.trim()],
+          <String>[javaExe, '-jar', googleJavaFormatJar.path, file.trim()],
         ),
       );
     }
@@ -592,7 +641,7 @@ class JavaFormatChecker extends FormatChecker {
     if (failed.isNotEmpty) {
       final bool plural = failed.length > 1;
       if (fixing) {
-        error('Fixing ${failed.length} Java file${plural ? 's' : ''}'
+        message('Fixing ${failed.length} Java file${plural ? 's' : ''}'
             ' which ${plural ? 'were' : 'was'} formatted incorrectly.');
       } else {
         error('Found ${failed.length} Java file${plural ? 's' : ''}'
@@ -746,6 +795,133 @@ class GnFormatChecker extends FormatChecker {
           'formatting problems.');
     }
     return failed.length;
+  }
+}
+
+/// Checks the format of any .dart files using the "dart format" command.
+class DartFormatChecker extends FormatChecker {
+  DartFormatChecker({
+    super.processManager,
+    required super.baseGitRef,
+    required Directory repoDir,
+    super.allFiles,
+    super.messageCallback,
+  }) : super(
+    repoDir: repoDir,
+  ) {
+    // $ENGINE/flutter/third_party/dart/tools/sdks/dart-sdk/bin/dart
+    _dartBin = path.join(
+      repoDir.absolute.parent.path,
+      'flutter',
+      'third_party',
+      'dart',
+      'tools',
+      'sdks',
+      'dart-sdk',
+      'bin',
+      Platform.isWindows ? 'dart.exe' : 'dart',
+    );
+  }
+
+  late final String _dartBin;
+
+  @override
+  Future<bool> checkFormatting() async {
+    message('Checking Dart formatting...');
+    return (await _runDartFormat(fixing: false)) == 0;
+  }
+
+  @override
+  Future<bool> fixFormatting() async {
+    message('Fixing Dart formatting...');
+    await _runDartFormat(fixing: true);
+    // The dart formatter shouldn't fail when fixing errors.
+    return true;
+  }
+
+  Future<int> _runDartFormat({required bool fixing}) async {
+    final List<String> filesToCheck = await getFileList(<String>['*.dart']);
+
+    final List<String> cmd = <String>[
+      _dartBin,
+      'format',
+      '--set-exit-if-changed',
+      '--show=none',
+      if (!fixing) '--output=show',
+      if (fixing) '--output=write',
+    ];
+    final List<WorkerJob> jobs = <WorkerJob>[];
+    for (final String file in filesToCheck) {
+      jobs.add(WorkerJob(<String>[...cmd, file]));
+    }
+    final ProcessPool dartFmt = ProcessPool(
+      processRunner: _processRunner,
+      printReport: namedReport('dart format'),
+    );
+
+    Iterable<WorkerJob> incorrect;
+    if (!fixing) {
+      final Stream<WorkerJob> completedJobs = dartFmt.startWorkers(jobs);
+      final List<WorkerJob> diffJobs = <WorkerJob>[];
+      await for (final WorkerJob completedJob in completedJobs) {
+        if (completedJob.result.exitCode == 1) {
+          diffJobs.add(
+            WorkerJob(
+              <String>[
+                'git',
+                'diff',
+                '--no-index',
+                '--no-color',
+                '--ignore-cr-at-eol',
+                '--',
+                completedJob.command.last,
+                '-',
+              ],
+              stdinRaw: codeUnitsAsStream(completedJob.result.stdoutRaw),
+            ),
+          );
+        }
+      }
+      final ProcessPool diffPool = ProcessPool(
+        processRunner: _processRunner,
+        printReport: namedReport('diff'),
+      );
+      final List<WorkerJob> completedDiffs = await diffPool.runToCompletion(diffJobs);
+      incorrect = completedDiffs.where((WorkerJob job) {
+        return job.result.exitCode != 0;
+      });
+    } else {
+      final List<WorkerJob> completedJobs = await dartFmt.runToCompletion(jobs);
+      incorrect = completedJobs.where((WorkerJob job) => job.result.exitCode == 1);
+    }
+
+    reportDone();
+
+    if (incorrect.isNotEmpty) {
+      final bool plural = incorrect.length > 1;
+      if (fixing) {
+        message('Fixing ${incorrect.length} dart file${plural ? 's' : ''}'
+            ' which ${plural ? 'were' : 'was'} formatted incorrectly.');
+      } else {
+        error('Found ${incorrect.length} Dart file${plural ? 's' : ''}'
+            ' which ${plural ? 'were' : 'was'} formatted incorrectly.');
+        stdout.writeln('To fix, run `et format` or:');
+        stdout.writeln();
+        stdout.writeln('git apply <<DONE');
+        for (final WorkerJob job in incorrect) {
+          stdout.write(job.result.stdout
+              .replaceFirst('b/-', 'b/${job.command[job.command.length - 2]}')
+              .replaceFirst('b/-', 'b/${job.command[job.command.length - 2]}')
+              .replaceFirst(RegExp('\\+Formatted \\d+ files? \\(\\d+ changed\\) in \\d+.\\d+ seconds.\n'), '')
+          );
+        }
+        stdout.writeln('DONE');
+        stdout.writeln();
+      }
+    } else {
+      message('All dart files formatted correctly.');
+    }
+    return incorrect.length;
   }
 }
 
@@ -1011,7 +1187,6 @@ final class HeaderFormatChecker extends FormatChecker {
     }
     final List<String> args = <String>[
       _dartBin,
-      '--disable-dart-dev',
       _headerGuardCheckBin,
       ...include.map((String f) => '--include=$f'),
     ];
@@ -1040,7 +1215,6 @@ final class HeaderFormatChecker extends FormatChecker {
     }
     final List<String> args = <String>[
       _dartBin,
-      '--disable-dart-dev',
       _headerGuardCheckBin,
       '--fix',
       ...include.map((String f) => '--include=$f'),
@@ -1109,7 +1283,8 @@ Future<int> main(List<String> arguments) async {
   parser.addMultiOption('check',
       abbr: 'c',
       allowed: formatCheckNames(),
-      defaultsTo: formatCheckNames(),
+      // TODO(goderbauer): Enable dart by default when we turned on the formatter.
+      defaultsTo: formatCheckNames()..remove(FormatCheck.dart.name),
       help: 'Specifies which checks will be performed. Defaults to all checks. '
           'May be specified more than once to perform multiple types of checks. ');
   parser.addFlag('verbose', help: 'Print verbose output.', defaultsTo: verbose);

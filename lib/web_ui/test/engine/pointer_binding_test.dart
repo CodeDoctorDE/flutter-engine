@@ -4,10 +4,12 @@
 
 import 'dart:js_util' as js_util;
 
+import 'package:meta/meta.dart';
 import 'package:test/bootstrap/browser.dart';
 import 'package:test/test.dart';
 import 'package:ui/src/engine.dart';
 import 'package:ui/ui.dart' as ui;
+import 'package:ui/ui_web/src/ui_web.dart' as ui_web;
 
 import 'keyboard_converter_test.dart';
 
@@ -46,7 +48,7 @@ void testMain() {
     return KeyboardConverter((ui.KeyData key) {
       keyDataList.add(key);
       return true;
-    }, OperatingSystem.linux);
+    }, ui_web.OperatingSystem.linux);
   }
 
   setUp(() {
@@ -303,6 +305,18 @@ void testMain() {
       child.remove();
     },
   );
+
+  test('allows default on touchstart events', () async {
+    final event = createDomEvent('Event', 'touchstart');
+
+    rootElement.dispatchEvent(event);
+
+    expect(
+      event.defaultPrevented,
+      isFalse,
+      reason: 'touchstart events should NOT be prevented. That breaks semantic taps!',
+    );
+  });
 
   test(
     'can receive pointer events on the app root',
@@ -699,6 +713,74 @@ void testMain() {
     },
   );
 
+  test('wheel event - preventDefault called', () {
+    // Synthesize a 'wheel' event.
+    final DomEvent event = _PointerEventContext().wheel(
+      buttons: 0,
+      clientX: 10,
+      clientY: 10,
+      deltaX: 10,
+      deltaY: 0,
+    );
+    rootElement.dispatchEvent(event);
+    // Check that the engine called `preventDefault` on the event.
+    expect(event.defaultPrevented, isTrue);
+  });
+
+  test('wheel event - framework can stop preventDefault (allowPlatformDefault)', () {
+    // The framework calls `data.respond(allowPlatformDefault: true)`
+    ui.PlatformDispatcher.instance.onPointerDataPacket = (ui.PointerDataPacket packet) {
+      packet.data.where(
+        (ui.PointerData datum) => datum.signalKind == ui.PointerSignalKind.scroll
+      ).forEach(
+        (ui.PointerData datum) {
+          datum.respond(allowPlatformDefault: true);
+        }
+      );
+    };
+
+    // Synthesize a 'wheel' event.
+    final DomEvent event = _PointerEventContext().wheel(
+      buttons: 0,
+      clientX: 10,
+      clientY: 10,
+      deltaX: 10,
+      deltaY: 0,
+    );
+    rootElement.dispatchEvent(event);
+
+    // Check that the engine did NOT call `preventDefault` on the event.
+    expect(event.defaultPrevented, isFalse);
+  });
+
+  test('wheel event - once allowPlatformDefault is set to true, it cannot be rolled back', () {
+    // The framework calls `data.respond(allowPlatformDefault: true)`
+    ui.PlatformDispatcher.instance.onPointerDataPacket = (ui.PointerDataPacket packet) {
+      packet.data.where(
+        (ui.PointerData datum) => datum.signalKind == ui.PointerSignalKind.scroll
+      ).forEach(
+        (ui.PointerData datum) {
+          datum.respond(allowPlatformDefault: false);
+          datum.respond(allowPlatformDefault: true);
+          datum.respond(allowPlatformDefault: false);
+        }
+      );
+    };
+
+    // Synthesize a 'wheel' event.
+    final DomEvent event = _PointerEventContext().wheel(
+      buttons: 0,
+      clientX: 10,
+      clientY: 10,
+      deltaX: 10,
+      deltaY: 0,
+    );
+    rootElement.dispatchEvent(event);
+
+    // Check that the engine did NOT call `preventDefault` on the event.
+    expect(event.defaultPrevented, isFalse);
+  });
+
   test(
     'does synthesize add or hover or move for scroll',
     () {
@@ -820,7 +902,7 @@ void testMain() {
       final _ButtonedEventMixin context = _PointerEventContext();
 
       const double dpi = 2.5;
-      debugOperatingSystemOverride = OperatingSystem.macOs;
+      ui_web.browser.debugOperatingSystemOverride = ui_web.OperatingSystem.macOs;
       EngineFlutterDisplay.instance.debugOverrideDevicePixelRatio(dpi);
 
       final List<ui.PointerDataPacket> packets = <ui.PointerDataPacket>[];
@@ -853,7 +935,7 @@ void testMain() {
       expect(packets[0].data[0].scrollDeltaY, equals(10.0 * dpi));
 
       EngineFlutterDisplay.instance.debugOverrideDevicePixelRatio(1.0);
-      debugBrowserEngineOverride = null;
+      ui_web.browser.debugBrowserEngineOverride = null;
     },
   );
 
@@ -1108,7 +1190,7 @@ void testMain() {
         packets.add(packet);
       };
 
-      debugOperatingSystemOverride = OperatingSystem.macOs;
+      ui_web.browser.debugOperatingSystemOverride = ui_web.OperatingSystem.macOs;
 
       rootElement.dispatchEvent(context.wheel(
         buttons: 0,
@@ -1197,7 +1279,7 @@ void testMain() {
       expect(packets[2].data[0].scrollDeltaX, equals(0.0));
       expect(packets[2].data[0].scrollDeltaY, equals(240.0));
 
-      debugOperatingSystemOverride = null;
+      ui_web.browser.debugOperatingSystemOverride = null;
     },
   );
 
@@ -2276,6 +2358,89 @@ void testMain() {
     },
   );
 
+  // STYLUS
+
+  test(
+    'handles stylus touches',
+    () {
+      // Repeated stylus touches use different pointerIds.
+
+      final _PointerEventContext context = _PointerEventContext();
+
+      final List<ui.PointerDataPacket> packets = <ui.PointerDataPacket>[];
+      ui.PlatformDispatcher.instance.onPointerDataPacket = (ui.PointerDataPacket packet) {
+        packets.add(packet);
+      };
+
+      rootElement.dispatchEvent(context.stylusTouchDown(
+        pointerId: 100,
+        buttons: 1,
+        clientX: 5.0,
+        clientY: 100.0,
+      ));
+      expect(packets, hasLength(1));
+      expect(packets[0].data, hasLength(2));
+      expect(packets[0].data[0].change, equals(ui.PointerChange.add));
+      expect(packets[0].data[0].synthesized, isTrue);
+      expect(packets[0].data[1].change, equals(ui.PointerChange.down));
+      expect(packets[0].data[1].synthesized, isFalse);
+      expect(packets[0].data[1].buttons, equals(1));
+      expect(packets[0].data[1].physicalX, equals(5.0 * dpi));
+      expect(packets[0].data[1].physicalY, equals(100.0 * dpi));
+      packets.clear();
+
+      rootElement.dispatchEvent(context.stylusTouchUp(
+        pointerId: 100,
+        buttons: 0,
+        clientX: 5.0,
+        clientY: 100.0,
+      ));
+      expect(packets, hasLength(1));
+      expect(packets[0].data, hasLength(1));
+      expect(packets[0].data[0].change, equals(ui.PointerChange.up));
+      expect(packets[0].data[0].synthesized, isFalse);
+      expect(packets[0].data[0].buttons, equals(0));
+      expect(packets[0].data[0].physicalX, equals(5.0 * dpi));
+      expect(packets[0].data[0].physicalY, equals(100.0 * dpi));
+      packets.clear();
+
+      rootElement.dispatchEvent(context.stylusTouchDown(
+        pointerId: 101,
+        buttons: 1,
+        clientX: 5.0,
+        clientY: 150.0,
+      ));
+      expect(packets, hasLength(1));
+      expect(packets[0].data, hasLength(2));
+      expect(packets[0].data[0].change, equals(ui.PointerChange.hover));
+      expect(packets[0].data[0].synthesized, isTrue);
+      expect(packets[0].data[0].buttons, equals(0));
+      expect(packets[0].data[0].physicalX, equals(5.0 * dpi));
+      expect(packets[0].data[0].physicalY, equals(150.0 * dpi));
+      expect(packets[0].data[1].change, equals(ui.PointerChange.down));
+      expect(packets[0].data[1].synthesized, isFalse);
+      expect(packets[0].data[1].buttons, equals(1));
+      expect(packets[0].data[1].physicalX, equals(5.0 * dpi));
+      expect(packets[0].data[1].physicalY, equals(150.0 * dpi));
+      packets.clear();
+
+      rootElement.dispatchEvent(context.stylusTouchUp(
+        pointerId: 101,
+        buttons: 0,
+        clientX: 5.0,
+        clientY: 150.0,
+      ));
+      expect(packets, hasLength(1));
+      expect(packets[0].data, hasLength(1));
+      expect(packets[0].data[0].change, equals(ui.PointerChange.up));
+      expect(packets[0].data[0].synthesized, isFalse);
+      expect(packets[0].data[0].buttons, equals(0));
+      expect(packets[0].data[0].physicalX, equals(5.0 * dpi));
+      expect(packets[0].data[0].physicalY, equals(150.0 * dpi));
+      packets.clear();
+    },
+  );
+
   // MULTIPOINTER ADAPTERS
 
   test(
@@ -2444,6 +2609,88 @@ void testMain() {
     },
   );
 
+  test('ignores pointerId on coalesced events', () {
+    final _MultiPointerEventMixin context = _PointerEventContext();
+    final List<ui.PointerDataPacket> packets = <ui.PointerDataPacket>[];
+    List<ui.PointerData> data;
+    ui.PlatformDispatcher.instance.onPointerDataPacket = (ui.PointerDataPacket packet) {
+      packets.add(packet);
+    };
+
+    context.multiTouchDown(const <_TouchDetails>[
+      _TouchDetails(pointer: 52, clientX: 100, clientY: 101),
+    ]).forEach(rootElement.dispatchEvent);
+    expect(packets.length, 1);
+
+    data = packets.single.data;
+    expect(data, hasLength(2));
+    expect(data[0].change, equals(ui.PointerChange.add));
+    expect(data[0].synthesized, isTrue);
+    expect(data[0].device, equals(52));
+    expect(data[0].physicalX, equals(100 * dpi));
+    expect(data[0].physicalY, equals(101 * dpi));
+
+    expect(data[1].change, equals(ui.PointerChange.down));
+    expect(data[1].device, equals(52));
+    expect(data[1].buttons, equals(1));
+    expect(data[1].physicalX, equals(100 * dpi));
+    expect(data[1].physicalY, equals(101 * dpi));
+    expect(data[1].physicalDeltaX, equals(0));
+    expect(data[1].physicalDeltaY, equals(0));
+    packets.clear();
+
+    // Pointer move with coaleasced events
+    context.multiTouchMove(const <_TouchDetails>[
+      _TouchDetails(pointer: 52, coalescedEvents: <_CoalescedTouchDetails>[
+        _CoalescedTouchDetails(pointer: 0, clientX: 301, clientY: 302),
+        _CoalescedTouchDetails(pointer: 0, clientX: 401, clientY: 402),
+      ]),
+    ]).forEach(rootElement.dispatchEvent);
+    expect(packets.length, 1);
+
+    data = packets.single.data;
+    expect(data, hasLength(2));
+    expect(data[0].change, equals(ui.PointerChange.move));
+    expect(data[0].device, equals(52));
+    expect(data[0].buttons, equals(1));
+    expect(data[0].physicalX, equals(301 * dpi));
+    expect(data[0].physicalY, equals(302 * dpi));
+    expect(data[0].physicalDeltaX, equals(201 * dpi));
+    expect(data[0].physicalDeltaY, equals(201 * dpi));
+
+    expect(data[1].change, equals(ui.PointerChange.move));
+    expect(data[1].device, equals(52));
+    expect(data[1].buttons, equals(1));
+    expect(data[1].physicalX, equals(401 * dpi));
+    expect(data[1].physicalY, equals(402 * dpi));
+    expect(data[1].physicalDeltaX, equals(100 * dpi));
+    expect(data[1].physicalDeltaY, equals(100 * dpi));
+    packets.clear();
+
+    // Pointer up
+    context.multiTouchUp(const <_TouchDetails>[
+      _TouchDetails(pointer: 52, clientX: 401, clientY: 402),
+    ]).forEach(rootElement.dispatchEvent);
+    expect(packets, hasLength(1));
+    expect(packets[0].data, hasLength(2));
+    expect(packets[0].data[0].change, equals(ui.PointerChange.up));
+    expect(packets[0].data[0].device, equals(52));
+    expect(packets[0].data[0].buttons, equals(0));
+    expect(packets[0].data[0].physicalX, equals(401 * dpi));
+    expect(packets[0].data[0].physicalY, equals(402 * dpi));
+    expect(packets[0].data[0].physicalDeltaX, equals(0));
+    expect(packets[0].data[0].physicalDeltaY, equals(0));
+
+    expect(packets[0].data[1].change, equals(ui.PointerChange.remove));
+    expect(packets[0].data[1].device, equals(52));
+    expect(packets[0].data[1].buttons, equals(0));
+    expect(packets[0].data[1].physicalX, equals(401 * dpi));
+    expect(packets[0].data[1].physicalY, equals(402 * dpi));
+    expect(packets[0].data[1].physicalDeltaX, equals(0));
+    expect(packets[0].data[1].physicalDeltaY, equals(0));
+    packets.clear();
+  });
+
   test(
     'correctly parses cancel event',
     () {
@@ -2601,6 +2848,60 @@ void testMain() {
     );
   });
 
+  group('Listener', () {
+    late DomElement eventTarget;
+    late DomEvent expected;
+    late bool handled;
+
+    setUp(() {
+      eventTarget = createDomElement('div');
+      expected = createDomEvent('Event', 'custom-event');
+      handled = false;
+    });
+
+    test('listeners can be registered', () {
+      Listener.register(
+        event: 'custom-event',
+        target: eventTarget,
+        handler: (event) {
+          expect(event, expected);
+          handled = true;
+        },
+      );
+
+      // Trigger the event...
+      eventTarget.dispatchEvent(expected);
+      expect(handled, isTrue);
+    });
+
+    test('listeners can be unregistered', () {
+      final Listener listener = Listener.register(
+        event: 'custom-event',
+        target: eventTarget,
+        handler: (event) {
+          handled = true;
+        },
+      );
+      listener.unregister();
+
+      eventTarget.dispatchEvent(expected);
+      expect(handled, isFalse);
+    });
+
+    test('listeners are registered only once', () {
+      int timesHandled = 0;
+      Listener.register(
+        event: 'custom-event',
+        target: eventTarget,
+        handler: (event) {
+          timesHandled++;
+        },
+      );
+      eventTarget.dispatchEvent(expected);
+      expect(timesHandled, 1, reason: 'The handler ran multiple times for a single event.');
+    });
+  });
+
   group('ClickDebouncer', () {
     _testClickDebouncer(getBinding: () => instance);
   });
@@ -2622,6 +2923,7 @@ void _testClickDebouncer({required PointerBinding Function() getBinding}) {
     String description,
     Future<void> Function() body, {
     Object? skip,
+    @doNotSubmit bool solo = false,
   }) {
     test(
       description,
@@ -2633,6 +2935,7 @@ void _testClickDebouncer({required PointerBinding Function() getBinding}) {
         EngineSemantics.instance.semanticsEnabled = false;
       },
       skip: skip,
+      solo: solo, // ignore: invalid_use_of_do_not_submit_member
     );
   }
 
@@ -2800,7 +3103,7 @@ void _testClickDebouncer({required PointerBinding Function() getBinding}) {
       }
     );
 
-    PointerBinding.clickDebouncer.onClick(click, 42, true);
+    PointerBinding.clickDebouncer.onClick(click, view.viewId, 42, true);
     expect(PointerBinding.clickDebouncer.isDebouncing, false);
     expect(pointerPackets, isEmpty);
     expect(semanticsActions, <CapturedSemanticsEvent>[
@@ -2825,7 +3128,7 @@ void _testClickDebouncer({required PointerBinding Function() getBinding}) {
       }
     );
 
-    PointerBinding.clickDebouncer.onClick(click, 42, true);
+    PointerBinding.clickDebouncer.onClick(click, view.viewId, 42, true);
     expect(pointerPackets, isEmpty);
     expect(semanticsActions, <CapturedSemanticsEvent>[
       (type: ui.SemanticsAction.tap, nodeId: 42)
@@ -2849,7 +3152,7 @@ void _testClickDebouncer({required PointerBinding Function() getBinding}) {
       }
     );
 
-    PointerBinding.clickDebouncer.onClick(click, 42, false);
+    PointerBinding.clickDebouncer.onClick(click, view.viewId, 42, false);
     expect(
       reason: 'When tappable declares that it is not listening to click events '
               'the debouncer flushes the pointer events to the framework and '
@@ -2908,7 +3211,7 @@ void _testClickDebouncer({required PointerBinding Function() getBinding}) {
         'clientY': testElement.getBoundingClientRect().y,
       }
     );
-    PointerBinding.clickDebouncer.onClick(click, 42, true);
+    PointerBinding.clickDebouncer.onClick(click, view.viewId, 42, true);
 
     expect(
       reason: 'Because the DOM click event was deduped.',
@@ -2916,7 +3219,68 @@ void _testClickDebouncer({required PointerBinding Function() getBinding}) {
       isEmpty,
     );
     // TODO(yjbanov): https://github.com/flutter/flutter/issues/142991.
-  }, skip: operatingSystem == OperatingSystem.windows);
+  }, skip: ui_web.browser.operatingSystem == ui_web.OperatingSystem.windows);
+
+  // Regression test for https://github.com/flutter/flutter/issues/147050
+  //
+  // This test emulates a long-press. Start with a "pointerdown" followed by no
+  // activity long enough that the debounce timer expires and the state of the
+  // ClickDebouncer is reset back to idle. Then a "pointerup" arrives seemingly
+  // standalone. Since no gesture is being debounced, the debouncer simply
+  // forwards it to the framework. However, "pointerup" will be immediately
+  // followed by a "click". Since we sent the "pointerdown" and "pointerup" to
+  // the framework already, the framework registered a tap. Forwarding the
+  // "click" would lead to a double-tap. This was the bug.
+  testWithSemantics('Dedupes click if pointer up happened recently without debouncing', () async {
+    expect(EnginePlatformDispatcher.instance.semanticsEnabled, true);
+    expect(PointerBinding.clickDebouncer.isDebouncing, false);
+
+    final DomElement testElement = createDomElement('flt-semantics');
+    testElement.setAttribute('flt-tappable', '');
+    view.dom.semanticsHost.appendChild(testElement);
+
+    // Begin a long-press with a "pointerdown".
+    testElement.dispatchEvent(context.primaryDown());
+
+    // Expire the timer causing the debouncer to reset itself.
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    expect(
+      reason: '"pointerdown" should be flushed when the timer expires.',
+      pointerPackets,
+      <ui.PointerChange>[ui.PointerChange.add, ui.PointerChange.down],
+    );
+    pointerPackets.clear();
+
+    // Send a "pointerup" while the debouncer is not debouncing anything.
+    testElement.dispatchEvent(context.primaryUp());
+
+    // A standalone "pointerup" should not start debouncing anything.
+    expect(PointerBinding.clickDebouncer.isDebouncing, isFalse);
+    expect(
+      reason: 'The "pointerup" should be forwarded to the framework immediately',
+      pointerPackets,
+      <ui.PointerChange>[ui.PointerChange.up],
+    );
+
+    // Use a delay that's short enough for the click to be deduped.
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    final DomEvent click = createDomMouseEvent(
+      'click',
+      <Object?, Object?>{
+        'clientX': testElement.getBoundingClientRect().x,
+        'clientY': testElement.getBoundingClientRect().y,
+      }
+    );
+    PointerBinding.clickDebouncer.onClick(click, view.viewId, 42, true);
+
+    expect(
+      reason: 'Because the DOM click event was deduped.',
+      semanticsActions,
+      isEmpty,
+    );
+    // TODO(yjbanov): https://github.com/flutter/flutter/issues/142991.
+  }, skip: ui_web.browser.operatingSystem == ui_web.OperatingSystem.windows);
 
   testWithSemantics('Forwards click if enough time passed after the last flushed pointerup', () async {
     expect(EnginePlatformDispatcher.instance.semanticsEnabled, true);
@@ -2963,7 +3327,7 @@ void _testClickDebouncer({required PointerBinding Function() getBinding}) {
         'clientY': testElement.getBoundingClientRect().y,
       }
     );
-    PointerBinding.clickDebouncer.onClick(click, 42, true);
+    PointerBinding.clickDebouncer.onClick(click, view.viewId, 42, true);
 
     expect(
       reason: 'The DOM click should still be sent to the framework because it '
@@ -3113,6 +3477,9 @@ mixin _ButtonedEventMixin on _BasicEventContext {
         if (wheelDeltaX != null) 'wheelDeltaX': wheelDeltaX,
         if (wheelDeltaY != null) 'wheelDeltaY': wheelDeltaY,
         'ctrlKey': ctrlKey,
+        'cancelable': true,
+        'bubbles': true,
+        'composed': true,
     });
     // timeStamp can't be set in the constructor, need to override the getter.
     if (timeStamp != null) {
@@ -3134,7 +3501,26 @@ mixin _ButtonedEventMixin on _BasicEventContext {
 }
 
 class _TouchDetails {
-  const _TouchDetails({this.pointer, this.clientX, this.clientY});
+  const _TouchDetails({
+    this.pointer,
+    this.clientX,
+    this.clientY,
+    this.coalescedEvents,
+  });
+
+  final int? pointer;
+  final double? clientX;
+  final double? clientY;
+
+  final List<_CoalescedTouchDetails>? coalescedEvents;
+}
+
+class _CoalescedTouchDetails {
+  const _CoalescedTouchDetails({
+    this.pointer,
+    this.clientX,
+    this.clientY,
+  });
 
   final int? pointer;
   final double? clientX;
@@ -3193,6 +3579,10 @@ class _PointerEventContext extends _BasicEventContext
 
   @override
   List<DomEvent> multiTouchDown(List<_TouchDetails> touches) {
+    assert(
+      touches.every((_TouchDetails details) => details.coalescedEvents == null),
+      'Coalesced events are not allowed for pointerdown events.',
+    );
     return touches
         .map((_TouchDetails details) => _downWithFullDetails(
               pointer: details.pointer,
@@ -3256,6 +3646,7 @@ class _PointerEventContext extends _BasicEventContext
               clientX: details.clientX,
               clientY: details.clientY,
               pointerType: 'touch',
+              coalescedEvents: details.coalescedEvents,
             ))
         .toList();
   }
@@ -3285,8 +3676,9 @@ class _PointerEventContext extends _BasicEventContext
     int? buttons,
     int? pointer,
     String? pointerType,
+    List<_CoalescedTouchDetails>? coalescedEvents,
   }) {
-    return createDomPointerEvent('pointermove', <String, dynamic>{
+    final event = createDomPointerEvent('pointermove', <String, dynamic>{
       'bubbles': true,
       'pointerId': pointer,
       'button': button,
@@ -3295,6 +3687,26 @@ class _PointerEventContext extends _BasicEventContext
       'clientY': clientY,
       'pointerType': pointerType,
     });
+
+    if (coalescedEvents != null) {
+      // There's no JS API for setting coalesced events, so we need to
+      // monkey-patch the `getCoalescedEvents` method to return what we want.
+      final coalescedEventJs = coalescedEvents
+          .map((_CoalescedTouchDetails details) => _moveWithFullDetails(
+                pointer: details.pointer,
+                button: button,
+                buttons: buttons,
+                clientX: details.clientX,
+                clientY: details.clientY,
+                pointerType: 'touch',
+              )).toJSAnyDeep;
+
+      js_util.setProperty(event, 'getCoalescedEvents', js_util.allowInterop(() {
+        return coalescedEventJs;
+      }));
+    }
+
+    return event;
   }
 
   @override
@@ -3335,6 +3747,10 @@ class _PointerEventContext extends _BasicEventContext
 
   @override
   List<DomEvent> multiTouchUp(List<_TouchDetails> touches) {
+    assert(
+      touches.every((_TouchDetails details) => details.coalescedEvents == null),
+      'Coalesced events are not allowed for pointerup events.',
+    );
     return touches
         .map((_TouchDetails details) => _upWithFullDetails(
               pointer: details.pointer,
@@ -3385,6 +3801,10 @@ class _PointerEventContext extends _BasicEventContext
 
   @override
   List<DomEvent> multiTouchCancel(List<_TouchDetails> touches) {
+    assert(
+      touches.every((_TouchDetails details) => details.coalescedEvents == null),
+      'Coalesced events are not allowed for pointercancel events.',
+    );
     return touches
         .map((_TouchDetails details) =>
             createDomPointerEvent('pointercancel', <String, dynamic>{
@@ -3397,6 +3817,40 @@ class _PointerEventContext extends _BasicEventContext
               'pointerType': 'touch',
             }))
         .toList();
+  }
+
+  // STYLUSES
+
+  DomEvent stylusTouchDown({
+    double? clientX,
+    double? clientY,
+    int? buttons,
+    int? pointerId = 1000,
+  }) {
+    return _downWithFullDetails(
+      pointer: pointerId,
+      buttons: buttons,
+      button: 0,
+      clientX: clientX,
+      clientY: clientY,
+      pointerType: 'pen',
+    );
+  }
+
+  DomEvent stylusTouchUp({
+    double? clientX,
+    double? clientY,
+    int? buttons,
+    int? pointerId = 1000,
+  }) {
+    return _upWithFullDetails(
+      pointer: pointerId,
+      buttons: buttons,
+      button: 0,
+      clientX: clientX,
+      clientY: clientY,
+      pointerType: 'pen',
+    );
   }
 }
 

@@ -18,9 +18,9 @@ import static io.flutter.embedding.android.FlutterActivityLaunchConfigs.EXTRA_DA
 import static io.flutter.embedding.android.FlutterActivityLaunchConfigs.EXTRA_DESTROY_ENGINE_WITH_ACTIVITY;
 import static io.flutter.embedding.android.FlutterActivityLaunchConfigs.EXTRA_ENABLE_STATE_RESTORATION;
 import static io.flutter.embedding.android.FlutterActivityLaunchConfigs.EXTRA_INITIAL_ROUTE;
-import static io.flutter.embedding.android.FlutterActivityLaunchConfigs.HANDLE_DEEPLINKING_META_DATA_KEY;
 import static io.flutter.embedding.android.FlutterActivityLaunchConfigs.INITIAL_ROUTE_META_DATA_KEY;
 import static io.flutter.embedding.android.FlutterActivityLaunchConfigs.NORMAL_THEME_META_DATA_KEY;
+import static io.flutter.embedding.android.FlutterActivityLaunchConfigs.deepLinkEnabled;
 
 import android.annotation.TargetApi;
 import android.app.Activity;
@@ -212,7 +212,7 @@ public class FlutterActivity extends Activity
     implements FlutterActivityAndFragmentDelegate.Host, LifecycleOwner {
   private static final String TAG = "FlutterActivity";
 
-  private boolean hasRegisteredBackCallback = false;
+  @VisibleForTesting boolean hasRegisteredBackCallback = false;
 
   /**
    * The ID of the {@code FlutterView} created by this activity.
@@ -633,6 +633,13 @@ public class FlutterActivity extends Activity
     switchLaunchThemeForNormalTheme();
 
     super.onCreate(savedInstanceState);
+
+    if (savedInstanceState != null) {
+      boolean frameworkHandlesBack =
+          savedInstanceState.getBoolean(
+              FlutterActivityAndFragmentDelegate.ON_BACK_CALLBACK_ENABLED_KEY);
+      setFrameworkHandlesBack(frameworkHandlesBack);
+    }
 
     delegate = new FlutterActivityAndFragmentDelegate(this);
     delegate.onAttach(this);
@@ -1404,9 +1411,7 @@ public class FlutterActivity extends Activity
   public boolean shouldHandleDeeplinking() {
     try {
       Bundle metaData = getMetaData();
-      boolean shouldHandleDeeplinking =
-          metaData != null ? metaData.getBoolean(HANDLE_DEEPLINKING_META_DATA_KEY) : false;
-      return shouldHandleDeeplinking;
+      return deepLinkEnabled(metaData);
     } catch (PackageManager.NameNotFoundException e) {
       return false;
     }
@@ -1477,6 +1482,11 @@ public class FlutterActivity extends Activity
   @Override
   public boolean attachToEngineAutomatically() {
     return true;
+  }
+
+  @Override
+  public boolean getBackCallbackState() {
+    return hasRegisteredBackCallback;
   }
 
   @Override

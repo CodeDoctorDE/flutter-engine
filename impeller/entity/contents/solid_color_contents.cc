@@ -7,7 +7,6 @@
 #include "impeller/entity/contents/content_context.h"
 #include "impeller/entity/entity.h"
 #include "impeller/entity/geometry/geometry.h"
-#include "impeller/geometry/path.h"
 #include "impeller/renderer/render_pass.h"
 
 namespace impeller {
@@ -28,8 +27,8 @@ bool SolidColorContents::IsSolidColor() const {
   return true;
 }
 
-bool SolidColorContents::IsOpaque() const {
-  return GetColor().IsOpaque();
+bool SolidColorContents::IsOpaque(const Matrix& transform) const {
+  return GetColor().IsOpaque() && !AppliesAlphaForStrokeCoverage(transform);
 }
 
 std::optional<Rect> SolidColorContents::GetCoverage(
@@ -38,7 +37,7 @@ std::optional<Rect> SolidColorContents::GetCoverage(
     return std::nullopt;
   }
 
-  const std::shared_ptr<Geometry>& geometry = GetGeometry();
+  const Geometry* geometry = GetGeometry();
   if (geometry == nullptr) {
     return std::nullopt;
   }
@@ -48,11 +47,14 @@ std::optional<Rect> SolidColorContents::GetCoverage(
 bool SolidColorContents::Render(const ContentContext& renderer,
                                 const Entity& entity,
                                 RenderPass& pass) const {
-  auto capture = entity.GetCapture().CreateChild("SolidColorContents");
   using VS = SolidFillPipeline::VertexShader;
+  using FS = SolidFillPipeline::FragmentShader;
+  auto& host_buffer = renderer.GetTransientsBuffer();
 
   VS::FrameInfo frame_info;
-  frame_info.color = capture.AddColor("Color", GetColor()).Premultiply();
+  FS::FragInfo frag_info;
+  frag_info.color = GetColor().Premultiply() *
+                    GetGeometry()->ComputeAlphaCoverage(entity.GetTransform());
 
   PipelineBuilderCallback pipeline_callback =
       [&renderer](ContentContextOptions options) {
@@ -60,18 +62,11 @@ bool SolidColorContents::Render(const ContentContext& renderer,
       };
   return ColorSourceContents::DrawGeometry<VS>(
       renderer, entity, pass, pipeline_callback, frame_info,
-      [](RenderPass& pass) {
+      [&frag_info, &host_buffer](RenderPass& pass) {
+        FS::BindFragInfo(pass, host_buffer.EmplaceUniform(frag_info));
         pass.SetCommandLabel("Solid Fill");
         return true;
       });
-}
-
-std::unique_ptr<SolidColorContents> SolidColorContents::Make(const Path& path,
-                                                             Color color) {
-  auto contents = std::make_unique<SolidColorContents>();
-  contents->SetGeometry(Geometry::MakeFillPath(path));
-  contents->SetColor(color);
-  return contents;
 }
 
 std::optional<Color> SolidColorContents::AsBackgroundColor(

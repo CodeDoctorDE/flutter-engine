@@ -9,6 +9,7 @@
 #include <iostream>
 #include <vector>
 
+#include "flutter/common/constants.h"
 #include "flutter/shell/platform/common/app_lifecycle_state.h"
 #include "flutter/shell/platform/common/engine_switches.h"
 #include "flutter/shell/platform/embedder/embedder.h"
@@ -33,6 +34,8 @@
 NSString* const kFlutterPlatformChannel = @"flutter/platform";
 NSString* const kFlutterSettingsChannel = @"flutter/settings";
 NSString* const kFlutterLifecycleChannel = @"flutter/lifecycle";
+
+using flutter::kFlutterImplicitViewId;
 
 /**
  * Constructs and returns a FlutterLocale struct corresponding to |locale|, which must outlive
@@ -106,7 +109,8 @@ constexpr char kTextPlainFormat[] = "text/plain";
 @property(nonatomic, readonly)
     NSMutableDictionary<NSString*, FlutterEngineRegistrar*>* pluginRegistrars;
 
-- (nullable FlutterViewController*)viewControllerForId:(FlutterViewId)viewId;
+- (nullable FlutterViewController*)viewControllerForIdentifier:
+    (FlutterViewIdentifier)viewIdentifier;
 
 /**
  * An internal method that adds the view controller with the given ID.
@@ -114,7 +118,8 @@ constexpr char kTextPlainFormat[] = "text/plain";
  * This method assigns the controller with the ID, puts the controller into the
  * map, and does assertions related to the implicit view ID.
  */
-- (void)registerViewController:(FlutterViewController*)controller forId:(FlutterViewId)viewId;
+- (void)registerViewController:(FlutterViewController*)controller
+                 forIdentifier:(FlutterViewIdentifier)viewIdentifier;
 
 /**
  * An internal method that removes the view controller with the given ID.
@@ -123,7 +128,7 @@ constexpr char kTextPlainFormat[] = "text/plain";
  * map. This is an no-op if the view ID is not associated with any view
  * controllers.
  */
-- (void)deregisterViewControllerForId:(FlutterViewId)viewId;
+- (void)deregisterViewControllerForIdentifier:(FlutterViewIdentifier)viewIdentifier;
 
 /**
  * Shuts down the engine if view requirement is not met, and headless execution
@@ -303,7 +308,7 @@ constexpr char kTextPlainFormat[] = "text/plain";
 - (instancetype)initWithPlugin:(nonnull NSString*)pluginKey
                  flutterEngine:(nonnull FlutterEngine*)flutterEngine;
 
-- (nullable NSView*)viewForId:(FlutterViewId)viewId;
+- (nullable NSView*)viewForIdentifier:(FlutterViewIdentifier)viewIdentifier;
 
 /**
  * The value published by this plugin, or NSNull if nothing has been published.
@@ -341,11 +346,11 @@ constexpr char kTextPlainFormat[] = "text/plain";
 }
 
 - (NSView*)view {
-  return [self viewForId:kFlutterImplicitViewId];
+  return [self viewForIdentifier:kFlutterImplicitViewId];
 }
 
-- (NSView*)viewForId:(FlutterViewId)viewId {
-  FlutterViewController* controller = [_flutterEngine viewControllerForId:viewId];
+- (NSView*)viewForIdentifier:(FlutterViewIdentifier)viewIdentifier {
+  FlutterViewController* controller = [_flutterEngine viewControllerForIdentifier:viewIdentifier];
   if (controller == nil) {
     return nil;
   }
@@ -394,7 +399,8 @@ constexpr char kTextPlainFormat[] = "text/plain";
 // Callbacks provided to the engine. See the called methods for documentation.
 #pragma mark - Static methods provided to engine configuration
 
-static void OnPlatformMessage(const FlutterPlatformMessage* message, FlutterEngine* engine) {
+static void OnPlatformMessage(const FlutterPlatformMessage* message, void* user_data) {
+  FlutterEngine* engine = (__bridge FlutterEngine*)user_data;
   [engine engineCallbackOnPlatformMessage:message];
 }
 
@@ -450,9 +456,6 @@ static void OnPlatformMessage(const FlutterPlatformMessage* message, FlutterEngi
   FlutterMethodChannel* _platformChannel;
 
   FlutterThreadSynchronizer* _threadSynchronizer;
-
-  // The next available view ID.
-  int _nextViewId;
 
   // Whether the application is currently the active application.
   BOOL _active;
@@ -510,8 +513,6 @@ static void SetThreadPriority(FlutterThreadPriority priority) {
   _binaryMessenger = [[FlutterBinaryMessengerRelay alloc] initWithParent:self];
   _isResponseValid = [[NSMutableArray alloc] initWithCapacity:1];
   [_isResponseValid addObject:@YES];
-  // kFlutterImplicitViewId is reserved for the implicit view.
-  _nextViewId = kFlutterImplicitViewId + 1;
 
   _embedderAPI.struct_size = sizeof(FlutterEngineProcTable);
   FlutterEngineGetProcAddresses(&_embedderAPI);
@@ -527,6 +528,12 @@ static void SetThreadPriority(FlutterThreadPriority priority) {
 
   _platformViewController = [[FlutterPlatformViewController alloc] init];
   _threadSynchronizer = [[FlutterThreadSynchronizer alloc] init];
+  // The macOS compositor must be initialized in the initializer because it is
+  // used when adding views, which might happen before runWithEntrypoint.
+  _macOSCompositor = std::make_unique<flutter::FlutterCompositor>(
+      [[FlutterViewEngineProvider alloc] initWithEngine:self],
+      [[FlutterTimeConverter alloc] initWithEngine:self], _platformViewController);
+
   [self setUpPlatformViewChannel];
   [self setUpAccessibilityChannel];
   [self setUpNotificationCenterListeners];
@@ -620,7 +627,7 @@ static void SetThreadPriority(FlutterThreadPriority priority) {
     // only operates on the implicit view. To support multi-view, we need a
     // way to pass in the ID (probably through FlutterSemanticsUpdate).
     FlutterEngine* engine = (__bridge FlutterEngine*)user_data;
-    [[engine viewControllerForId:kFlutterImplicitViewId] updateSemantics:update];
+    [[engine viewControllerForIdentifier:kFlutterImplicitViewId] updateSemantics:update];
   };
   flutterArguments.custom_dart_entrypoint = entrypoint.UTF8String;
   flutterArguments.shutdown_dart_vm_when_done = true;
@@ -638,16 +645,23 @@ static void SetThreadPriority(FlutterThreadPriority priority) {
   static size_t sTaskRunnerIdentifiers = 0;
   const FlutterTaskRunnerDescription cocoa_task_runner_description = {
       .struct_size = sizeof(FlutterTaskRunnerDescription),
-      .user_data = (void*)CFBridgingRetain(self),
+      // Retain for use in post_task_callback. Released in destruction_callback.
+      .user_data = (__bridge_retained void*)self,
       .runs_task_on_current_thread_callback = [](void* user_data) -> bool {
         return [[NSThread currentThread] isMainThread];
       },
       .post_task_callback = [](FlutterTask task, uint64_t target_time_nanos,
                                void* user_data) -> void {
-        [((__bridge FlutterEngine*)(user_data)) postMainThreadTask:task
-                                           targetTimeInNanoseconds:target_time_nanos];
+        FlutterEngine* engine = (__bridge FlutterEngine*)user_data;
+        [engine postMainThreadTask:task targetTimeInNanoseconds:target_time_nanos];
       },
       .identifier = ++sTaskRunnerIdentifiers,
+      .destruction_callback =
+          [](void* user_data) {
+            // Balancing release for the retain when setting user_data above.
+            FlutterEngine* engine = (__bridge_transfer FlutterEngine*)user_data;
+            engine = nil;
+          },
   };
   const FlutterCustomTaskRunners custom_task_runners = {
       .struct_size = sizeof(FlutterCustomTaskRunners),
@@ -728,14 +742,29 @@ static void SetThreadPriority(FlutterThreadPriority priority) {
   }
 }
 
-- (void)registerViewController:(FlutterViewController*)controller forId:(FlutterViewId)viewId {
+- (void)registerViewController:(FlutterViewController*)controller
+                 forIdentifier:(FlutterViewIdentifier)viewIdentifier {
+  _macOSCompositor->AddView(viewIdentifier);
   NSAssert(controller != nil, @"The controller must not be nil.");
-  NSAssert(![controller attached],
-           @"The incoming view controller is already attached to an engine.");
-  NSAssert([_viewControllers objectForKey:@(viewId)] == nil, @"The requested view ID is occupied.");
-  [controller setUpWithEngine:self viewId:viewId threadSynchronizer:_threadSynchronizer];
-  NSAssert(controller.viewId == viewId, @"Failed to assign view ID.");
-  [_viewControllers setObject:controller forKey:@(viewId)];
+  NSAssert(controller.engine == nil,
+           @"The FlutterViewController is unexpectedly attached to "
+           @"engine %@ before initialization.",
+           controller.engine);
+  NSAssert([_viewControllers objectForKey:@(viewIdentifier)] == nil,
+           @"The requested view ID is occupied.");
+  [_viewControllers setObject:controller forKey:@(viewIdentifier)];
+  [controller setUpWithEngine:self
+               viewIdentifier:viewIdentifier
+           threadSynchronizer:_threadSynchronizer];
+  NSAssert(controller.viewIdentifier == viewIdentifier, @"Failed to assign view ID.");
+  // Verify that the controller's property are updated accordingly. Failing the
+  // assertions is likely because either the FlutterViewController or the
+  // FlutterEngine is mocked. Please subclass these classes instead.
+  NSAssert(controller.attached, @"The FlutterViewController should switch to the attached mode "
+                                @"after it is added to a FlutterEngine.");
+  NSAssert(controller.engine == self,
+           @"The FlutterViewController was added to %@, but its engine unexpectedly became %@.",
+           self, controller.engine);
 
   if (controller.viewLoaded) {
     [self viewControllerViewDidLoad:controller];
@@ -763,20 +792,27 @@ static void SetThreadPriority(FlutterThreadPriority priority) {
                         }];
                       }
                     }];
-  FML_DCHECK([_vsyncWaiters objectForKey:@(viewController.viewId)] == nil);
+  FML_DCHECK([_vsyncWaiters objectForKey:@(viewController.viewIdentifier)] == nil);
   @synchronized(_vsyncWaiters) {
-    [_vsyncWaiters setObject:waiter forKey:@(viewController.viewId)];
+    [_vsyncWaiters setObject:waiter forKey:@(viewController.viewIdentifier)];
   }
 }
 
-- (void)deregisterViewControllerForId:(FlutterViewId)viewId {
-  FlutterViewController* oldController = [self viewControllerForId:viewId];
-  if (oldController != nil) {
-    [oldController detachFromEngine];
-    [_viewControllers removeObjectForKey:@(viewId)];
+- (void)deregisterViewControllerForIdentifier:(FlutterViewIdentifier)viewIdentifier {
+  _macOSCompositor->RemoveView(viewIdentifier);
+  FlutterViewController* controller = [self viewControllerForIdentifier:viewIdentifier];
+  // The controller can be nil. The engine stores only a weak ref, and this
+  // method could have been called from the controller's dealloc.
+  if (controller != nil) {
+    [controller detachFromEngine];
+    NSAssert(!controller.attached,
+             @"The FlutterViewController unexpectedly stays attached after being removed. "
+             @"In unit tests, this is likely because either the FlutterViewController or "
+             @"the FlutterEngine is mocked. Please subclass these classes instead.");
   }
+  [_viewControllers removeObjectForKey:@(viewIdentifier)];
   @synchronized(_vsyncWaiters) {
-    [_vsyncWaiters removeObjectForKey:@(viewId)];
+    [_vsyncWaiters removeObjectForKey:@(viewIdentifier)];
   }
 }
 
@@ -786,9 +822,9 @@ static void SetThreadPriority(FlutterThreadPriority priority) {
   }
 }
 
-- (FlutterViewController*)viewControllerForId:(FlutterViewId)viewId {
-  FlutterViewController* controller = [_viewControllers objectForKey:@(viewId)];
-  NSAssert(controller == nil || controller.viewId == viewId,
+- (FlutterViewController*)viewControllerForIdentifier:(FlutterViewIdentifier)viewIdentifier {
+  FlutterViewController* controller = [_viewControllers objectForKey:@(viewIdentifier)];
+  NSAssert(controller == nil || controller.viewIdentifier == viewIdentifier,
            @"The stored controller has unexpected view ID.");
   return controller;
 }
@@ -808,12 +844,12 @@ static void SetThreadPriority(FlutterThreadPriority priority) {
              @"If you wanted to create an FlutterViewController and set it to an existing engine, "
              @"you should use FlutterViewController#init(engine:, nibName, bundle:) instead.",
              controller.engine);
-    [self registerViewController:controller forId:kFlutterImplicitViewId];
+    [self registerViewController:controller forIdentifier:kFlutterImplicitViewId];
   } else if (currentController != nil && controller == nil) {
-    NSAssert(currentController.viewId == kFlutterImplicitViewId,
-             @"The default controller has an unexpected ID %llu", currentController.viewId);
+    NSAssert(currentController.viewIdentifier == kFlutterImplicitViewId,
+             @"The default controller has an unexpected ID %llu", currentController.viewIdentifier);
     // From non-nil to nil.
-    [self deregisterViewControllerForId:kFlutterImplicitViewId];
+    [self deregisterViewControllerForIdentifier:kFlutterImplicitViewId];
     [self shutDownIfNeeded];
   } else {
     // From non-nil to a different non-nil view controller.
@@ -827,14 +863,10 @@ static void SetThreadPriority(FlutterThreadPriority priority) {
 }
 
 - (FlutterViewController*)viewController {
-  return [self viewControllerForId:kFlutterImplicitViewId];
+  return [self viewControllerForIdentifier:kFlutterImplicitViewId];
 }
 
 - (FlutterCompositor*)createFlutterCompositor {
-  _macOSCompositor = std::make_unique<flutter::FlutterCompositor>(
-      [[FlutterViewEngineProvider alloc] initWithEngine:self],
-      [[FlutterTimeConverter alloc] initWithEngine:self], _platformViewController);
-
   _compositor = {};
   _compositor.struct_size = sizeof(FlutterCompositor);
   _compositor.user_data = _macOSCompositor.get();
@@ -868,13 +900,15 @@ static void SetThreadPriority(FlutterThreadPriority priority) {
 #pragma mark - Framework-internal methods
 
 - (void)addViewController:(FlutterViewController*)controller {
-  [self registerViewController:controller forId:kFlutterImplicitViewId];
+  // FlutterEngine can only handle the implicit view for now. Adding more views
+  // throws an assertion.
+  NSAssert(self.viewController == nil,
+           @"The engine already has a view controller for the implicit view.");
+  self.viewController = controller;
 }
 
 - (void)removeViewController:(nonnull FlutterViewController*)viewController {
-  NSAssert([viewController attached] && viewController.engine == self,
-           @"The given view controller is not associated with this engine.");
-  [self deregisterViewControllerForId:viewController.viewId];
+  [self deregisterViewControllerForIdentifier:viewController.viewIdentifier];
   [self shutDownIfNeeded];
 }
 
@@ -937,7 +971,7 @@ static void SetThreadPriority(FlutterThreadPriority priority) {
     @"platformBrightness" : [brightness isEqualToString:@"Dark"] ? @"dark" : @"light",
     // TODO(jonahwilliams): https://github.com/flutter/flutter/issues/32006.
     @"textScaleFactor" : @1.0,
-    @"alwaysUse24HourFormat" : @false
+    @"alwaysUse24HourFormat" : @([FlutterHourFormat isAlwaysUse24HourFormat]),
   }];
 }
 
@@ -963,7 +997,7 @@ static void SetThreadPriority(FlutterThreadPriority priority) {
   if (!_engine || !viewController || !viewController.viewLoaded) {
     return;
   }
-  NSAssert([self viewControllerForId:viewController.viewId] == viewController,
+  NSAssert([self viewControllerForIdentifier:viewController.viewIdentifier] == viewController,
            @"The provided view controller is not attached to this engine.");
   NSView* view = viewController.flutterView;
   CGRect scaledBounds = [view convertRectToBacking:view.bounds];
@@ -978,14 +1012,14 @@ static void SetThreadPriority(FlutterThreadPriority priority) {
       .left = static_cast<size_t>(scaledBounds.origin.x),
       .top = static_cast<size_t>(scaledBounds.origin.y),
       .display_id = static_cast<uint64_t>(displayId),
-      .view_id = viewController.viewId,
+      .view_id = viewController.viewIdentifier,
   };
   _embedderAPI.SendWindowMetricsEvent(_engine, &windowMetricsEvent);
 }
 
 - (void)sendPointerEvent:(const FlutterPointerEvent&)event {
   _embedderAPI.SendPointerEvent(_engine, &event, 1);
-  _lastViewWithPointerEvent = [self viewControllerForId:kFlutterImplicitViewId].flutterView;
+  _lastViewWithPointerEvent = [self viewControllerForIdentifier:kFlutterImplicitViewId].flutterView;
 }
 
 - (void)sendKeyEvent:(const FlutterKeyEvent&)event
@@ -1117,9 +1151,6 @@ static void SetThreadPriority(FlutterThreadPriority priority) {
     NSLog(@"Could not de-initialize the Flutter engine: error %d", result);
   }
 
-  // Balancing release for the retain in the task runner dispatch table.
-  CFRelease((CFTypeRef)self);
-
   result = _embedderAPI.Shutdown(_engine);
   if (result != kSuccess) {
     NSLog(@"Failed to shut down Flutter engine: error %d", result);
@@ -1239,7 +1270,7 @@ static void SetThreadPriority(FlutterThreadPriority priority) {
 - (void)announceAccessibilityMessage:(NSString*)message
                         withPriority:(NSAccessibilityPriorityLevel)priority {
   NSAccessibilityPostNotificationWithUserInfo(
-      [self viewControllerForId:kFlutterImplicitViewId].flutterView,
+      [self viewControllerForIdentifier:kFlutterImplicitViewId].flutterView,
       NSAccessibilityAnnouncementRequestedNotification,
       @{NSAccessibilityAnnouncementKey : message, NSAccessibilityPriorityKey : @(priority)});
 }

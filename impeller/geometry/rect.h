@@ -137,6 +137,10 @@ struct TRect {
     return TRect(x, y, saturated::Add(x, width), saturated::Add(y, height));
   }
 
+  constexpr static TRect MakeWH(Type width, Type height) {
+    return TRect(0, 0, width, height);
+  }
+
   constexpr static TRect MakeOriginSize(const TPoint<Type>& origin,
                                         const TSize<Type>& size) {
     return MakeXYWH(origin.x, origin.y, size.width, size.height);
@@ -145,6 +149,16 @@ struct TRect {
   template <class U>
   constexpr static TRect MakeSize(const TSize<U>& size) {
     return TRect(0.0, 0.0, size.width, size.height);
+  }
+
+  /// Construct a floating point rect |Rect| from another Rect of a
+  /// potentially different storage type (eg. |IRect|).
+  template <class U, class FT = T>
+  constexpr static std::enable_if_t<std::is_floating_point_v<FT>, TRect> Make(
+      const TRect<U>& rect) {
+    return MakeLTRB(
+        static_cast<FT>(rect.GetLeft()), static_cast<FT>(rect.GetTop()),
+        static_cast<FT>(rect.GetRight()), static_cast<FT>(rect.GetBottom()));
   }
 
   template <typename U>
@@ -185,6 +199,10 @@ struct TRect {
            bottom_ == r.bottom_;
   }
 
+  [[nodiscard]] constexpr bool operator!=(const TRect& r) const {
+    return !(*this == r);
+  }
+
   [[nodiscard]] constexpr TRect Scale(Type scale) const {
     return TRect(left_ * scale,   //
                  top_ * scale,    //
@@ -220,6 +238,25 @@ struct TRect {
            p.y >= top_ &&       //
            p.x < right_ &&      //
            p.y < bottom_;
+  }
+
+  /// @brief  Returns true iff the provided point |p| is inside the
+  ///         closed-range interior of this rectangle.
+  ///
+  ///         Unlike the regular |Contains(TPoint)| method, this method
+  ///         considers all points along the boundary of the rectangle
+  ///         to be contained within the rectangle - useful for testing
+  ///         if vertices that define a filled shape would carry the
+  ///         interior of that shape outside the bounds of the rectangle.
+  ///         Since both geometries are defining half-open spaces, their
+  ///         defining geometry needs to consider their boundaries to
+  ///         be equivalent with respect to interior and exterior.
+  [[nodiscard]] constexpr bool ContainsInclusive(const TPoint<Type>& p) const {
+    return !this->IsEmpty() &&  //
+           p.x >= left_ &&      //
+           p.y >= top_ &&       //
+           p.x <= right_ &&     //
+           p.y <= bottom_;
   }
 
   /// @brief  Returns true iff this rectangle is not empty and it also
@@ -341,8 +378,7 @@ struct TRect {
 
   /// @brief  Get the area of the rectangle, equivalent to |GetSize().Area()|
   [[nodiscard]] constexpr T Area() const {
-    // TODO(flutter/flutter#141710) - Use saturated math to avoid overflow
-    // https://github.com/flutter/flutter/issues/141710
+    // TODO(141710): Use saturated math to avoid overflow.
     return IsEmpty() ? 0 : (right_ - left_) * (bottom_ - top_);
   }
 
@@ -505,6 +541,10 @@ struct TRect {
     } else {
       return std::nullopt;
     }
+  }
+
+  [[nodiscard]] constexpr TRect IntersectionOrEmpty(const TRect& o) const {
+    return Intersection(o).value_or(TRect());
   }
 
   [[nodiscard]] constexpr bool IntersectsWithRect(const TRect& o) const {
@@ -744,7 +784,9 @@ struct TRect {
 };
 
 using Rect = TRect<Scalar>;
-using IRect = TRect<int64_t>;
+using IRect32 = TRect<int32_t>;
+using IRect64 = TRect<int64_t>;
+using IRect = IRect64;
 
 #undef ONLY_ON_FLOAT
 #undef ONLY_ON_FLOAT_M
@@ -756,7 +798,7 @@ namespace std {
 template <class T>
 inline std::ostream& operator<<(std::ostream& out,
                                 const impeller::TRect<T>& r) {
-  out << "(" << r.GetOrigin() << ", " << r.GetSize() << ")";
+  out << "(" << r.GetLeftTop() << " => " << r.GetRightBottom() << ")";
   return out;
 }
 

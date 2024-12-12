@@ -84,29 +84,26 @@ TEST(DlOpSpy, SetColorSource) {
     dl->Dispatch(dl_op_spy);
     ASSERT_DID_DRAW(dl_op_spy, dl);
   }
-  {  // Set transparent color.
-    DisplayListBuilder builder;
-    DlPaint paint;
-    auto color = DlColor::kTransparent();
-    DlColorColorSource color_source_transparent(color);
-    paint.setColorSource(color_source_transparent.shared());
-    builder.DrawRect(SkRect::MakeWH(5, 5), paint);
-    sk_sp<DisplayList> dl = builder.Build();
+  {  // setColorSource(null) restores previous color visibility
     DlOpSpy dl_op_spy;
-    dl->Dispatch(dl_op_spy);
-    ASSERT_NO_DRAW(dl_op_spy, dl);
-  }
-  {  // Set black color.
-    DisplayListBuilder builder;
-    DlPaint paint;
-    auto color = DlColor::kBlack();
-    DlColorColorSource color_source_transparent(color);
-    paint.setColorSource(color_source_transparent.shared());
-    builder.DrawRect(SkRect::MakeWH(5, 5), paint);
-    sk_sp<DisplayList> dl = builder.Build();
-    DlOpSpy dl_op_spy;
-    dl->Dispatch(dl_op_spy);
-    ASSERT_DID_DRAW(dl_op_spy, dl);
+    DlOpReceiver* receiver = &dl_op_spy;
+    receiver->setColor(DlColor::kTransparent());
+    receiver->drawRect(DlRect::MakeWH(5, 5));
+    ASSERT_FALSE(dl_op_spy.did_draw());
+    DlColor colors[2] = {
+        DlColor::kGreen(),
+        DlColor::kBlue(),
+    };
+    float stops[2] = {
+        0.0f,
+        1.0f,
+    };
+    auto color_source = DlColorSource::MakeLinear({0, 0}, {10, 10}, 2, colors,
+                                                  stops, DlTileMode::kClamp);
+    receiver->setColorSource(color_source.get());
+    receiver->setColorSource(nullptr);
+    receiver->drawRect(DlRect::MakeWH(5, 5));
+    ASSERT_FALSE(dl_op_spy.did_draw());
   }
 }
 
@@ -175,6 +172,27 @@ TEST(DlOpSpy, DrawLine) {
     DisplayListBuilder builder;
     DlPaint paint(DlColor::kTransparent());
     builder.DrawLine(SkPoint::Make(0, 1), SkPoint::Make(1, 2), paint);
+    sk_sp<DisplayList> dl = builder.Build();
+    DlOpSpy dl_op_spy;
+    dl->Dispatch(dl_op_spy);
+    ASSERT_NO_DRAW(dl_op_spy, dl);
+  }
+}
+
+TEST(DlOpSpy, DrawDashedLine) {
+  {  // black
+    DisplayListBuilder builder;
+    DlPaint paint(DlColor::kBlack());
+    builder.DrawDashedLine(DlPoint(0, 1), DlPoint(1, 2), 1.0f, 1.0f, paint);
+    sk_sp<DisplayList> dl = builder.Build();
+    DlOpSpy dl_op_spy;
+    dl->Dispatch(dl_op_spy);
+    ASSERT_DID_DRAW(dl_op_spy, dl);
+  }
+  {  // transparent
+    DisplayListBuilder builder;
+    DlPaint paint(DlColor::kTransparent());
+    builder.DrawDashedLine(DlPoint(0, 1), DlPoint(1, 2), 1.0f, 1.0f, paint);
     sk_sp<DisplayList> dl = builder.Build();
     DlOpSpy dl_op_spy;
     dl->Dispatch(dl_op_spy);
@@ -369,7 +387,7 @@ TEST(DlOpSpy, DrawVertices) {
     };
     auto dl_vertices = DlVertices::Make(DlVertexMode::kTriangles, 3, vertices,
                                         texture_coordinates, colors, 0);
-    builder.DrawVertices(dl_vertices.get(), DlBlendMode::kSrc, paint);
+    builder.DrawVertices(dl_vertices, DlBlendMode::kSrc, paint);
     sk_sp<DisplayList> dl = builder.Build();
     DlOpSpy dl_op_spy;
     dl->Dispatch(dl_op_spy);
@@ -395,7 +413,7 @@ TEST(DlOpSpy, DrawVertices) {
     };
     auto dl_vertices = DlVertices::Make(DlVertexMode::kTriangles, 3, vertices,
                                         texture_coordinates, colors, 0);
-    builder.DrawVertices(dl_vertices.get(), DlBlendMode::kSrc, paint);
+    builder.DrawVertices(dl_vertices, DlBlendMode::kSrc, paint);
     sk_sp<DisplayList> dl = builder.Build();
     DlOpSpy dl_op_spy;
     dl->Dispatch(dl_op_spy);

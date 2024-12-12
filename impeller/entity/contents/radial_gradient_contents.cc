@@ -43,7 +43,7 @@ const std::vector<Scalar>& RadialGradientContents::GetStops() const {
   return stops_;
 }
 
-bool RadialGradientContents::IsOpaque() const {
+bool RadialGradientContents::IsOpaque(const Matrix& transform) const {
   if (GetOpacityFactor() < 1 || tile_mode_ == Entity::TileMode::kDecal) {
     return false;
   }
@@ -52,14 +52,26 @@ bool RadialGradientContents::IsOpaque() const {
       return false;
     }
   }
-  return true;
+  return !AppliesAlphaForStrokeCoverage(transform);
 }
+
+#define ARRAY_LEN(a) (sizeof(a) / sizeof(a[0]))
+#define UNIFORM_FRAG_INFO(t) \
+  t##GradientUniformFillPipeline::FragmentShader::FragInfo
+#define UNIFORM_COLOR_SIZE ARRAY_LEN(UNIFORM_FRAG_INFO(Radial)::colors)
+#define UNIFORM_STOP_SIZE ARRAY_LEN(UNIFORM_FRAG_INFO(Radial)::stop_pairs)
+static_assert(UNIFORM_COLOR_SIZE == kMaxUniformGradientStops);
+static_assert(UNIFORM_STOP_SIZE == kMaxUniformGradientStops / 2);
 
 bool RadialGradientContents::Render(const ContentContext& renderer,
                                     const Entity& entity,
                                     RenderPass& pass) const {
   if (renderer.GetDeviceCapabilities().SupportsSSBO()) {
     return RenderSSBO(renderer, entity, pass);
+  }
+  if (colors_.size() <= kMaxUniformGradientStops &&
+      stops_.size() <= kMaxUniformGradientStops) {
+    return RenderUniform(renderer, entity, pass);
   }
   return RenderTexture(renderer, entity, pass);
 }
@@ -79,13 +91,15 @@ bool RadialGradientContents::RenderSSBO(const ContentContext& renderer,
       };
   return ColorSourceContents::DrawGeometry<VS>(
       renderer, entity, pass, pipeline_callback, frame_info,
-      [this, &renderer](RenderPass& pass) {
+      [this, &renderer, &entity](RenderPass& pass) {
         FS::FragInfo frag_info;
         frag_info.center = center_;
         frag_info.radius = radius_;
         frag_info.tile_mode = static_cast<Scalar>(tile_mode_);
         frag_info.decal_border_color = decal_border_color_;
-        frag_info.alpha = GetOpacityFactor();
+        frag_info.alpha =
+            GetOpacityFactor() *
+            GetGeometry()->ComputeAlphaCoverage(entity.GetTransform());
 
         auto& host_buffer = renderer.GetTransientsBuffer();
         auto colors = CreateGradientColors(colors_, stops_);
@@ -99,6 +113,42 @@ bool RadialGradientContents::RenderSSBO(const ContentContext& renderer,
         FS::BindFragInfo(
             pass, renderer.GetTransientsBuffer().EmplaceUniform(frag_info));
         FS::BindColorData(pass, color_buffer);
+
+        return true;
+      });
+}
+
+bool RadialGradientContents::RenderUniform(const ContentContext& renderer,
+                                           const Entity& entity,
+                                           RenderPass& pass) const {
+  using VS = RadialGradientUniformFillPipeline::VertexShader;
+  using FS = RadialGradientUniformFillPipeline::FragmentShader;
+
+  VS::FrameInfo frame_info;
+  frame_info.matrix = GetInverseEffectTransform();
+
+  PipelineBuilderCallback pipeline_callback =
+      [&renderer](ContentContextOptions options) {
+        return renderer.GetRadialGradientUniformFillPipeline(options);
+      };
+  return ColorSourceContents::DrawGeometry<VS>(
+      renderer, entity, pass, pipeline_callback, frame_info,
+      [this, &renderer, &entity](RenderPass& pass) {
+        FS::FragInfo frag_info;
+        frag_info.center = center_;
+        frag_info.radius = radius_;
+        frag_info.tile_mode = static_cast<Scalar>(tile_mode_);
+        frag_info.alpha =
+            GetOpacityFactor() *
+            GetGeometry()->ComputeAlphaCoverage(entity.GetTransform());
+        frag_info.colors_length = PopulateUniformGradientColors(
+            colors_, stops_, frag_info.colors, frag_info.stop_pairs);
+        frag_info.decal_border_color = decal_border_color_;
+
+        pass.SetCommandLabel("RadialGradientUniformFill");
+
+        FS::BindFragInfo(
+            pass, renderer.GetTransientsBuffer().EmplaceUniform(frag_info));
 
         return true;
       });
@@ -126,7 +176,7 @@ bool RadialGradientContents::RenderTexture(const ContentContext& renderer,
       };
   return ColorSourceContents::DrawGeometry<VS>(
       renderer, entity, pass, pipeline_callback, frame_info,
-      [this, &renderer, &gradient_texture](RenderPass& pass) {
+      [this, &renderer, &gradient_texture, &entity](RenderPass& pass) {
         FS::FragInfo frag_info;
         frag_info.center = center_;
         frag_info.radius = radius_;
@@ -134,7 +184,9 @@ bool RadialGradientContents::RenderTexture(const ContentContext& renderer,
         frag_info.decal_border_color = decal_border_color_;
         frag_info.texture_sampler_y_coord_scale =
             gradient_texture->GetYCoordScale();
-        frag_info.alpha = GetOpacityFactor();
+        frag_info.alpha =
+            GetOpacityFactor() *
+            GetGeometry()->ComputeAlphaCoverage(entity.GetTransform());
         frag_info.half_texel =
             Vector2(0.5 / gradient_texture->GetSize().width,
                     0.5 / gradient_texture->GetSize().height);

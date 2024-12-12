@@ -9,6 +9,7 @@ import static io.flutter.embedding.android.FlutterActivityLaunchConfigs.DEFAULT_
 
 import android.annotation.TargetApi;
 import android.app.Activity;
+import android.content.ComponentCallbacks2;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -75,6 +76,7 @@ import java.util.List;
   private static final String TAG = "FlutterActivityAndFragmentDelegate";
   private static final String FRAMEWORK_RESTORATION_BUNDLE_KEY = "framework";
   private static final String PLUGINS_RESTORATION_BUNDLE_KEY = "plugins";
+  static final String ON_BACK_CALLBACK_ENABLED_KEY = "enableOnBackInvokedCallbackState";
   private static final int FLUTTER_SPLASH_VIEW_FALLBACK_ID = 486947586;
 
   /** Factory to obtain a FlutterActivityAndFragmentDelegate instance. */
@@ -583,6 +585,7 @@ import java.util.List;
     ensureAlive();
     if (flutterEngine != null) {
       updateSystemUiOverlays();
+      flutterEngine.getPlatformViewsController().onResume();
     } else {
       Log.w(TAG, "onPostResume() invoked before FlutterFragment was attached to an Activity.");
     }
@@ -644,6 +647,12 @@ import java.util.List;
     // See https://github.com/flutter/flutter/issues/93276
     previousVisibility = flutterView.getVisibility();
     flutterView.setVisibility(View.GONE);
+    if (flutterEngine != null) {
+      // When an Activity is stopped it won't have its onTrimMemory callback invoked. Normally,
+      // this isn't a problem but because of a bug in some builds of Android 14 we must act as
+      // if the onTrimMemory callback has been called.
+      flutterEngine.getRenderer().onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_BACKGROUND);
+    }
   }
 
   /**
@@ -682,6 +691,12 @@ import java.util.List;
       final Bundle plugins = new Bundle();
       flutterEngine.getActivityControlSurface().onSaveInstanceState(plugins);
       bundle.putBundle(PLUGINS_RESTORATION_BUNDLE_KEY, plugins);
+    }
+
+    // If using a cached engine, we need to save whether the framework or the system should handle
+    // backs.
+    if (host.getCachedEngineId() != null && !host.shouldDestroyEngineWithHost()) {
+      bundle.putBoolean(ON_BACK_CALLBACK_ENABLED_KEY, host.getBackCallbackState());
     }
   }
 
@@ -1020,6 +1035,7 @@ import java.util.List;
         flutterEngine.getSystemChannel().sendMemoryPressureWarning();
       }
       flutterEngine.getRenderer().onTrimMemory(level);
+      flutterEngine.getPlatformViewsController().onTrimMemory(level);
     }
   }
 
@@ -1288,5 +1304,7 @@ import java.util.List;
      * <p>Defaults to {@code true}.
      */
     boolean attachToEngineAutomatically();
+
+    boolean getBackCallbackState();
   }
 }

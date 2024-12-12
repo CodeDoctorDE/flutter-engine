@@ -8,7 +8,6 @@
 #include <optional>
 
 #include "flutter/fml/logging.h"
-#include "flutter/fml/macros.h"
 #include "impeller/core/formats.h"
 #include "impeller/core/shader_types.h"
 #include "impeller/renderer/backend/gles/gles.h"
@@ -27,6 +26,8 @@ constexpr GLenum ToMode(PrimitiveType primitive_type) {
       return GL_LINE_STRIP;
     case PrimitiveType::kPoint:
       return GL_POINTS;
+    case PrimitiveType::kTriangleFan:
+      return GL_TRIANGLE_FAN;
   }
   FML_UNREACHABLE();
 }

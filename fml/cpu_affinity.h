@@ -5,6 +5,7 @@
 #ifndef FLUTTER_FML_CPU_AFFINITY_H_
 #define FLUTTER_FML_CPU_AFFINITY_H_
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -26,6 +27,9 @@ enum class CpuAffinity {
 
   /// @brief Request affinity for all non-performance cores.
   kNotPerformance,
+
+  /// @brief Request affinity for all non-efficiency cores.
+  kNotEfficiency,
 };
 
 /// @brief Request count of efficiency cores.
@@ -79,6 +83,7 @@ class CPUSpeedTracker {
   std::vector<size_t> efficiency_;
   std::vector<size_t> performance_;
   std::vector<size_t> not_performance_;
+  std::vector<size_t> not_efficiency_;
 };
 
 /// @note Visible for testing.

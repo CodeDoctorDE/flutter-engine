@@ -8,10 +8,9 @@
 #include <chrono>
 #include <memory>
 
-#include "flutter/fml/closure.h"
-#include "flutter/fml/macros.h"
 #include "flutter/fml/status.h"
 #include "flutter/fml/time/time_delta.h"
+#include "impeller/core/host_buffer.h"
 #include "impeller/core/runtime_types.h"
 #include "impeller/core/texture.h"
 #include "impeller/geometry/point.h"
@@ -19,7 +18,6 @@
 #include "impeller/playground/image/decompressed_image.h"
 #include "impeller/playground/switches.h"
 #include "impeller/renderer/render_pass.h"
-#include "impeller/renderer/renderer.h"
 #include "impeller/runtime_stage/runtime_stage.h"
 
 namespace impeller {
@@ -64,6 +62,8 @@ class Playground {
 
   void TeardownWindow();
 
+  bool IsPlaygroundEnabled() const;
+
   Point GetCursorPosition() const;
 
   ISize GetWindowSize() const;
@@ -78,7 +78,9 @@ class Playground {
 
   std::shared_ptr<Context> MakeContext() const;
 
-  bool OpenPlaygroundHere(const Renderer::RenderCallback& render_callback);
+  using RenderCallback = std::function<bool(RenderTarget& render_target)>;
+
+  bool OpenPlaygroundHere(const RenderCallback& render_callback);
 
   bool OpenPlaygroundHere(SinglePassCallback pass_callback);
 
@@ -110,9 +112,11 @@ class Playground {
   [[nodiscard]] fml::Status SetCapabilities(
       const std::shared_ptr<Capabilities>& capabilities);
 
-  /// TODO(https://github.com/flutter/flutter/issues/139950): Remove this.
   /// Returns true if `OpenPlaygroundHere` will actually render anything.
   bool WillRenderSomething() const;
+
+  using GLProcAddressResolver = std::function<void*(const char* proc_name)>;
+  GLProcAddressResolver CreateGLProcAddressResolver() const;
 
  protected:
   const PlaygroundSwitches switches_;
@@ -125,9 +129,9 @@ class Playground {
   fml::TimeDelta start_time_;
   std::unique_ptr<PlaygroundImpl> impl_;
   std::shared_ptr<Context> context_;
-  std::unique_ptr<Renderer> renderer_;
   Point cursor_position_;
   ISize window_size_ = ISize{1024, 768};
+  std::shared_ptr<HostBuffer> host_buffer_;
 
   void SetCursorPosition(Point pos);
 

@@ -8,15 +8,14 @@
 #include <memory>
 
 #include "flutter/common/graphics/gl_context_switch.h"
-#include "flutter/common/graphics/msaa_sample_count.h"
 #include "flutter/common/graphics/texture.h"
 #include "flutter/fml/concurrent_message_loop.h"
 #include "flutter/fml/macros.h"
-#include "flutter/fml/platform/darwin/scoped_nsobject.h"
 #include "flutter/fml/synchronization/sync_switch.h"
 #import "flutter/shell/platform/darwin/common/framework/Headers/FlutterTexture.h"
 #import "flutter/shell/platform/darwin/ios/rendering_api_selection.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "impeller/display_list/aiks_context.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 
 namespace impeller {
 class Context;
@@ -50,16 +49,12 @@ class IOSContext {
   ///                       engine/platform.
   /// @param[in]  backend   A client rendering backend supported by the
   ///                       engine/platform.
-  /// @param[in]  msaa_samples
-  ///                       The number of MSAA samples to use. Only supplied to
-  ///                       Skia, must be either 0, 1, 2, 4, or 8.
   ///
   /// @return     A valid context on success. `nullptr` on failure.
   ///
   static std::unique_ptr<IOSContext> Create(
       IOSRenderingAPI api,
       IOSRenderingBackend backend,
-      MsaaSampleCount msaa_samples,
       const std::shared_ptr<const fml::SyncSwitch>& is_gpu_disabled_sync_switch);
 
   //----------------------------------------------------------------------------
@@ -125,9 +120,8 @@ class IOSContext {
   /// @return     The texture proxy if the rendering backend supports embedder
   ///             provided external textures.
   ///
-  virtual std::unique_ptr<Texture> CreateExternalTexture(
-      int64_t texture_id,
-      fml::scoped_nsobject<NSObject<FlutterTexture>> texture) = 0;
+  virtual std::unique_ptr<Texture> CreateExternalTexture(int64_t texture_id,
+                                                         NSObject<FlutterTexture>* texture) = 0;
 
   //----------------------------------------------------------------------------
   /// @brief      Accessor for the Skia context associated with IOSSurfaces and
@@ -145,13 +139,12 @@ class IOSContext {
 
   virtual std::shared_ptr<impeller::Context> GetImpellerContext() const;
 
-  MsaaSampleCount GetMsaaSampleCount() const { return msaa_samples_; }
+  virtual std::shared_ptr<impeller::AiksContext> GetAiksContext() const;
 
  protected:
-  explicit IOSContext(MsaaSampleCount msaa_samples);
+  explicit IOSContext();
 
  private:
-  MsaaSampleCount msaa_samples_ = MsaaSampleCount::kNone;
   FML_DISALLOW_COPY_AND_ASSIGN(IOSContext);
 };
 

@@ -4,15 +4,12 @@
 
 package io.flutter.embedding.engine.loader;
 
-import static io.flutter.Build.API_LEVELS;
-
 import android.app.ActivityManager;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
 import android.hardware.display.DisplayManager;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -50,6 +47,10 @@ public class FlutterLoader {
       "io.flutter.embedding.android.EnableOpenGLGPUTracing";
   private static final String IMPELLER_VULKAN_GPU_TRACING_DATA_KEY =
       "io.flutter.embedding.android.EnableVulkanGPUTracing";
+  private static final String DISABLE_MERGED_PLATFORM_UI_THREAD_KEY =
+      "io.flutter.embedding.android.DisableMergedPlatformUIThread";
+  private static final String DISABLE_SURFACE_CONTROL =
+      "io.flutter.embedding.android.DisableSurfaceControl";
 
   /**
    * Set whether leave or clean up the VM after the last shell shuts down. It can be set from app's
@@ -183,7 +184,7 @@ public class FlutterLoader {
                 ResourceExtractor resourceExtractor = initResources(appContext);
 
                 try {
-                  flutterJNI.loadLibrary();
+                  flutterJNI.loadLibrary(appContext);
                 } catch (UnsatisfiedLinkError unsatisfiedLinkError) {
                   String couldntFindVersion = "couldn't find \"libflutter.so\"";
                   String notFoundVersion = "dlopen failed: library \"libflutter.so\" not found";
@@ -208,8 +209,11 @@ public class FlutterLoader {
                             + cpuArch
                             + ", and the native libraries directory (with path "
                             + nativeLibsDir.getAbsolutePath()
-                            + ") contains the following files: "
-                            + Arrays.toString(nativeLibsContents),
+                            + ") "
+                            + (nativeLibsDir.exists()
+                                ? "contains the following files: "
+                                    + Arrays.toString(nativeLibsContents)
+                                : "does not exist."),
                         unsatisfiedLinkError);
                   }
 
@@ -235,13 +239,6 @@ public class FlutterLoader {
           };
       initResultFuture = executorService.submit(initTask);
     }
-  }
-
-  private static boolean areValidationLayersOnByDefault() {
-    if (BuildConfig.DEBUG && Build.VERSION.SDK_INT >= API_LEVELS.API_26) {
-      return Build.SUPPORTED_ABIS[0].equals("arm64-v8a");
-    }
-    return false;
   }
 
   /**
@@ -350,11 +347,14 @@ public class FlutterLoader {
       shellArgs.add("--prefetched-default-font-manager");
 
       if (metaData != null) {
-        if (metaData.getBoolean(ENABLE_IMPELLER_META_DATA_KEY, false)) {
-          shellArgs.add("--enable-impeller");
+        if (metaData.containsKey(ENABLE_IMPELLER_META_DATA_KEY)) {
+          if (metaData.getBoolean(ENABLE_IMPELLER_META_DATA_KEY)) {
+            shellArgs.add("--enable-impeller=true");
+          } else {
+            shellArgs.add("--enable-impeller=false");
+          }
         }
-        if (metaData.getBoolean(
-            ENABLE_VULKAN_VALIDATION_META_DATA_KEY, areValidationLayersOnByDefault())) {
+        if (metaData.getBoolean(ENABLE_VULKAN_VALIDATION_META_DATA_KEY, false)) {
           shellArgs.add("--enable-vulkan-validation");
         }
         if (metaData.getBoolean(IMPELLER_OPENGL_GPU_TRACING_DATA_KEY, false)) {
@@ -363,6 +363,16 @@ public class FlutterLoader {
         if (metaData.getBoolean(IMPELLER_VULKAN_GPU_TRACING_DATA_KEY, false)) {
           shellArgs.add("--enable-vulkan-gpu-tracing");
         }
+        if (metaData.containsKey(DISABLE_MERGED_PLATFORM_UI_THREAD_KEY)) {
+          if (metaData.getBoolean(DISABLE_MERGED_PLATFORM_UI_THREAD_KEY)) {
+            shellArgs.add("--no-enable-merged-platform-ui-thread");
+          }
+        }
+
+        if (metaData.getBoolean(DISABLE_SURFACE_CONTROL, false)) {
+          shellArgs.add("--disable-surface-control");
+        }
+
         String backend = metaData.getString(IMPELLER_BACKEND_META_DATA_KEY);
         if (backend != null) {
           shellArgs.add("--impeller-backend=" + backend);

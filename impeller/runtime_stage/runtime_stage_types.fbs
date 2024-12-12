@@ -30,6 +30,7 @@ enum StructByteType:uint8 {
 table UniformDescription {
   name: string;
   location: uint64;
+  binding: uint64;
   type: UniformDataType;
   bit_width: uint64;
   rows: uint64;
@@ -82,5 +83,6 @@ table RuntimeStages {
   sksl: RuntimeStage;
   metal: RuntimeStage;
   opengles: RuntimeStage;
+  opengles3: RuntimeStage;
   vulkan: RuntimeStage;
 }

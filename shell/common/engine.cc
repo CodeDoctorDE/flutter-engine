@@ -10,17 +10,12 @@
 #include <utility>
 #include <vector>
 
+#include "flutter/assets/native_assets.h"
 #include "flutter/common/settings.h"
-#include "flutter/fml/make_copyable.h"
 #include "flutter/fml/trace_event.h"
-#include "flutter/lib/snapshot/snapshot.h"
 #include "flutter/lib/ui/text/font_collection.h"
 #include "flutter/shell/common/animator.h"
-#include "flutter/shell/common/platform_view.h"
-#include "flutter/shell/common/shell.h"
-#include "impeller/runtime_stage/runtime_stage.h"
 #include "rapidjson/document.h"
-#include "third_party/dart/runtime/include/dart_tools_api.h"
 
 namespace flutter {
 
@@ -74,7 +69,6 @@ Engine::Engine(Delegate& delegate,
                fml::WeakPtr<IOManager> io_manager,
                const fml::RefPtr<SkiaUnrefQueue>& unref_queue,
                fml::TaskRunnerAffineWeakPtr<SnapshotDelegate> snapshot_delegate,
-               std::shared_ptr<VolatilePathTracker> volatile_path_tracker,
                const std::shared_ptr<fml::SyncSwitch>& gpu_disabled_switch,
                impeller::RuntimeStageBackend runtime_stage_type)
     : Engine(delegate,
@@ -105,10 +99,11 @@ Engine::Engine(Delegate& delegate,
           image_generator_registry_.GetWeakPtr(),  // image generator registry
           settings_.advisory_script_uri,           // advisory script uri
           settings_.advisory_script_entrypoint,    // advisory script entrypoint
-          std::move(volatile_path_tracker),        // volatile path tracker
-          vm.GetConcurrentWorkerTaskRunner(),      // concurrent task runner
-          settings_.enable_impeller,               // enable impeller
-          runtime_stage_type,                      // runtime stage type
+          settings_
+              .skia_deterministic_rendering_on_cpu,  // deterministic rendering
+          vm.GetConcurrentWorkerTaskRunner(),        // concurrent task runner
+          settings_.enable_impeller,                 // enable impeller
+          runtime_stage_type,                        // runtime stage type
       });
 }
 
@@ -195,6 +190,11 @@ bool Engine::UpdateAssetManager(
     font_collection_->RegisterTestFonts();
   }
 
+  if (native_assets_manager_ == nullptr) {
+    native_assets_manager_ = std::make_shared<NativeAssetsManager>();
+  }
+  native_assets_manager_->RegisterNativeAssets(asset_manager_);
+
   return true;
 }
 
@@ -244,7 +244,8 @@ Engine::RunStatus Engine::Run(RunConfiguration configuration) {
           configuration.GetEntrypoint(),             //
           configuration.GetEntrypointLibrary(),      //
           configuration.GetEntrypointArgs(),         //
-          configuration.TakeIsolateConfiguration())  //
+          configuration.TakeIsolateConfiguration(),  //
+          native_assets_manager_)                    //
   ) {
     return RunStatus::Failure;
   }
@@ -291,6 +292,10 @@ std::string Engine::GetUIIsolateName() {
 
 bool Engine::UIIsolateHasLivePorts() {
   return runtime_controller_->HasLivePorts();
+}
+
+bool Engine::UIIsolateHasPendingMicrotasks() {
+  return runtime_controller_->HasPendingMicrotasks();
 }
 
 tonic::DartErrorHandleType Engine::GetUIIsolateLastError() {

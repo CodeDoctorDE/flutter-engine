@@ -6,16 +6,16 @@
 
 #include <array>
 #include <cstdint>
-#include <vector>
 
 #include "fml/status.h"
 #include "impeller/base/validation.h"
+#include "impeller/core/buffer_view.h"
 #include "impeller/core/device_buffer.h"
 #include "impeller/core/formats.h"
 #include "impeller/core/texture.h"
+#include "impeller/core/vertex_buffer.h"
 #include "impeller/renderer/backend/vulkan/barrier_vk.h"
 #include "impeller/renderer/backend/vulkan/command_buffer_vk.h"
-#include "impeller/renderer/backend/vulkan/command_encoder_vk.h"
 #include "impeller/renderer/backend/vulkan/context_vk.h"
 #include "impeller/renderer/backend/vulkan/device_buffer_vk.h"
 #include "impeller/renderer/backend/vulkan/formats_vk.h"
@@ -24,6 +24,7 @@
 #include "impeller/renderer/backend/vulkan/sampler_vk.h"
 #include "impeller/renderer/backend/vulkan/shared_object_vk.h"
 #include "impeller/renderer/backend/vulkan/texture_vk.h"
+#include "vulkan/vulkan.hpp"
 #include "vulkan/vulkan_handles.hpp"
 
 namespace impeller {
@@ -50,60 +51,57 @@ static vk::ClearDepthStencilValue VKClearValueFromDepthStencil(uint32_t stencil,
   return value;
 }
 
-static std::vector<vk::ClearValue> GetVKClearValues(
-    const RenderTarget& target) {
-  std::vector<vk::ClearValue> clears;
-
-  for (const auto& [_, color] : target.GetColorAttachments()) {
-    clears.emplace_back(VKClearValueFromColor(color.clear_color));
-    if (color.resolve_texture) {
-      clears.emplace_back(VKClearValueFromColor(color.clear_color));
-    }
-  }
+static size_t GetVKClearValues(
+    const RenderTarget& target,
+    std::array<vk::ClearValue, kMaxAttachments>& values) {
+  size_t offset = 0u;
+  target.IterateAllColorAttachments(
+      [&values, &offset](size_t index,
+                         const ColorAttachment& attachment) -> bool {
+        values.at(offset++) = VKClearValueFromColor(attachment.clear_color);
+        if (attachment.resolve_texture) {
+          values.at(offset++) = VKClearValueFromColor(attachment.clear_color);
+        }
+        return true;
+      });
 
   const auto& depth = target.GetDepthAttachment();
   const auto& stencil = target.GetStencilAttachment();
 
   if (depth.has_value()) {
-    clears.emplace_back(VKClearValueFromDepthStencil(
-        stencil ? stencil->clear_stencil : 0u, depth->clear_depth));
+    values.at(offset++) = VKClearValueFromDepthStencil(
+        stencil ? stencil->clear_stencil : 0u, depth->clear_depth);
   } else if (stencil.has_value()) {
-    clears.emplace_back(VKClearValueFromDepthStencil(
-        stencil->clear_stencil, depth ? depth->clear_depth : 0.0f));
+    values.at(offset++) = VKClearValueFromDepthStencil(
+        stencil->clear_stencil, depth ? depth->clear_depth : 0.0f);
   }
-
-  return clears;
+  return offset;
 }
 
 SharedHandleVK<vk::RenderPass> RenderPassVK::CreateVKRenderPass(
     const ContextVK& context,
     const SharedHandleVK<vk::RenderPass>& recycled_renderpass,
     const std::shared_ptr<CommandBufferVK>& command_buffer) const {
-  BarrierVK barrier;
-  barrier.new_layout = vk::ImageLayout::eGeneral;
-  barrier.cmd_buffer = command_buffer->GetEncoder()->GetCommandBuffer();
-  barrier.src_access = vk::AccessFlagBits::eShaderRead;
-  barrier.src_stage = vk::PipelineStageFlagBits::eFragmentShader;
-  barrier.dst_access = vk::AccessFlagBits::eColorAttachmentWrite |
-                       vk::AccessFlagBits::eTransferWrite;
-  barrier.dst_stage = vk::PipelineStageFlagBits::eColorAttachmentOutput |
-                      vk::PipelineStageFlagBits::eTransfer;
-
   RenderPassBuilderVK builder;
 
-  for (const auto& [bind_point, color] : render_target_.GetColorAttachments()) {
-    builder.SetColorAttachment(
-        bind_point,                                          //
-        color.texture->GetTextureDescriptor().format,        //
-        color.texture->GetTextureDescriptor().sample_count,  //
-        color.load_action,                                   //
-        color.store_action                                   //
-    );
-    TextureVK::Cast(*color.texture).SetLayout(barrier);
-    if (color.resolve_texture) {
-      TextureVK::Cast(*color.resolve_texture).SetLayout(barrier);
-    }
-  }
+  render_target_.IterateAllColorAttachments(
+      [&](size_t bind_point, const ColorAttachment& attachment) -> bool {
+        builder.SetColorAttachment(
+            bind_point,                                               //
+            attachment.texture->GetTextureDescriptor().format,        //
+            attachment.texture->GetTextureDescriptor().sample_count,  //
+            attachment.load_action,                                   //
+            attachment.store_action,                                  //
+            TextureVK::Cast(*attachment.texture).GetLayout()          //
+        );
+        TextureVK::Cast(*attachment.texture)
+            .SetLayoutWithoutEncoding(vk::ImageLayout::eGeneral);
+        if (attachment.resolve_texture) {
+          TextureVK::Cast(*attachment.resolve_texture)
+              .SetLayoutWithoutEncoding(vk::ImageLayout::eGeneral);
+        }
+        return true;
+      });
 
   if (auto depth = render_target_.GetDepthAttachment(); depth.has_value()) {
     builder.SetDepthStencilAttachment(
@@ -142,21 +140,17 @@ RenderPassVK::RenderPassVK(const std::shared_ptr<const Context>& context,
                            const RenderTarget& target,
                            std::shared_ptr<CommandBufferVK> command_buffer)
     : RenderPass(context, target), command_buffer_(std::move(command_buffer)) {
-  color_image_vk_ =
-      render_target_.GetColorAttachments().find(0u)->second.texture;
-  resolve_image_vk_ =
-      render_target_.GetColorAttachments().find(0u)->second.resolve_texture;
+  const ColorAttachment& color0 = render_target_.GetColorAttachment(0);
+  color_image_vk_ = color0.texture;
+  resolve_image_vk_ = color0.resolve_texture;
 
   const auto& vk_context = ContextVK::Cast(*context);
-  const std::shared_ptr<CommandEncoderVK>& encoder =
-      command_buffer_->GetEncoder();
-  command_buffer_vk_ = encoder->GetCommandBuffer();
-  render_target_.IterateAllAttachments(
-      [&encoder](const auto& attachment) -> bool {
-        encoder->Track(attachment.texture);
-        encoder->Track(attachment.resolve_texture);
-        return true;
-      });
+  command_buffer_vk_ = command_buffer_->GetCommandBuffer();
+  render_target_.IterateAllAttachments([&](const auto& attachment) -> bool {
+    command_buffer_->Track(attachment.texture);
+    command_buffer_->Track(attachment.resolve_texture);
+    return true;
+  });
 
   SharedHandleVK<vk::RenderPass> recycled_render_pass;
   SharedHandleVK<vk::Framebuffer> recycled_framebuffer;
@@ -186,7 +180,8 @@ RenderPassVK::RenderPassVK(const std::shared_ptr<const Context>& context,
     return;
   }
 
-  if (!encoder->Track(framebuffer) || !encoder->Track(render_pass_)) {
+  if (!command_buffer_->Track(framebuffer) ||
+      !command_buffer_->Track(render_pass_)) {
     is_valid_ = false;
     return;
   }
@@ -195,7 +190,8 @@ RenderPassVK::RenderPassVK(const std::shared_ptr<const Context>& context,
     TextureVK::Cast(*resolve_image_vk_).SetCachedRenderPass(render_pass_);
   }
 
-  auto clear_values = GetVKClearValues(render_target_);
+  std::array<vk::ClearValue, kMaxAttachments> clears;
+  size_t clear_count = GetVKClearValues(render_target_, clears);
 
   vk::RenderPassBeginInfo pass_info;
   pass_info.renderPass = *render_pass_;
@@ -203,7 +199,8 @@ RenderPassVK::RenderPassVK(const std::shared_ptr<const Context>& context,
   pass_info.renderArea.extent.width = static_cast<uint32_t>(target_size.width);
   pass_info.renderArea.extent.height =
       static_cast<uint32_t>(target_size.height);
-  pass_info.setClearValues(clear_values);
+  pass_info.setPClearValues(clears.data());
+  pass_info.setClearValueCount(clear_count);
 
   command_buffer_vk_.beginRenderPass(pass_info, vk::SubpassContents::eInline);
 
@@ -238,10 +235,9 @@ bool RenderPassVK::IsValid() const {
   return is_valid_;
 }
 
-void RenderPassVK::OnSetLabel(std::string label) {
+void RenderPassVK::OnSetLabel(std::string_view label) {
 #ifdef IMPELLER_DEBUG
-  ContextVK::Cast(*context_).SetDebugName(render_pass_->Get(),
-                                          std::string(label).c_str());
+  ContextVK::Cast(*context_).SetDebugName(render_pass_->Get(), label.data());
 #endif  // IMPELLER_DEBUG
 }
 
@@ -257,31 +253,37 @@ SharedHandleVK<vk::Framebuffer> RenderPassVK::CreateVKFramebuffer(
   fb_info.height = target_size.height;
   fb_info.layers = 1u;
 
-  std::vector<vk::ImageView> attachments;
+  std::array<vk::ImageView, kMaxAttachments> attachments;
+  size_t count = 0;
 
   // This bit must be consistent to ensure compatibility with the pass created
   // earlier. Follow this order: Color attachments, then depth-stencil, then
   // stencil.
-  for (const auto& [_, color] : render_target_.GetColorAttachments()) {
-    // The bind point doesn't matter here since that information is present in
-    // the render pass.
-    attachments.emplace_back(
-        TextureVK::Cast(*color.texture).GetRenderTargetView());
-    if (color.resolve_texture) {
-      attachments.emplace_back(
-          TextureVK::Cast(*color.resolve_texture).GetRenderTargetView());
-    }
-  }
+  render_target_.IterateAllColorAttachments(
+      [&attachments, &count](size_t index,
+                             const ColorAttachment& attachment) -> bool {
+        // The bind point doesn't matter here since that information is present
+        // in the render pass.
+        attachments[count++] =
+            TextureVK::Cast(*attachment.texture).GetRenderTargetView();
+        if (attachment.resolve_texture) {
+          attachments[count++] = TextureVK::Cast(*attachment.resolve_texture)
+                                     .GetRenderTargetView();
+        }
+        return true;
+      });
+
   if (auto depth = render_target_.GetDepthAttachment(); depth.has_value()) {
-    attachments.emplace_back(
-        TextureVK::Cast(*depth->texture).GetRenderTargetView());
+    attachments[count++] =
+        TextureVK::Cast(*depth->texture).GetRenderTargetView();
   } else if (auto stencil = render_target_.GetStencilAttachment();
              stencil.has_value()) {
-    attachments.emplace_back(
-        TextureVK::Cast(*stencil->texture).GetRenderTargetView());
+    attachments[count++] =
+        TextureVK::Cast(*stencil->texture).GetRenderTargetView();
   }
 
-  fb_info.setAttachments(attachments);
+  fb_info.setPAttachments(attachments.data());
+  fb_info.setAttachmentCount(count);
 
   auto [result, framebuffer] =
       context.GetDevice().createFramebufferUnique(fb_info);
@@ -295,9 +297,8 @@ SharedHandleVK<vk::Framebuffer> RenderPassVK::CreateVKFramebuffer(
 }
 
 // |RenderPass|
-void RenderPassVK::SetPipeline(
-    const std::shared_ptr<Pipeline<PipelineDescriptor>>& pipeline) {
-  pipeline_ = pipeline.get();
+void RenderPassVK::SetPipeline(PipelineRef pipeline) {
+  pipeline_ = pipeline;
   if (!pipeline_) {
     return;
   }
@@ -307,7 +308,7 @@ void RenderPassVK::SetPipeline(
 
   if (pipeline_uses_input_attachments_) {
     if (bound_image_offset_ >= kMaxBindings) {
-      pipeline_ = nullptr;
+      pipeline_ = PipelineRef(nullptr);
       return;
     }
     vk::DescriptorImageInfo image_info;
@@ -329,7 +330,7 @@ void RenderPassVK::SetPipeline(
 // |RenderPass|
 void RenderPassVK::SetCommandLabel(std::string_view label) {
 #ifdef IMPELLER_DEBUG
-  command_buffer_->GetEncoder()->PushDebugGroup(label);
+  command_buffer_->PushDebugGroup(label);
   has_label_ = true;
 #endif  // IMPELLER_DEBUG
 }
@@ -366,58 +367,78 @@ void RenderPassVK::SetScissor(IRect scissor) {
 }
 
 // |RenderPass|
+void RenderPassVK::SetElementCount(size_t count) {
+  element_count_ = count;
+}
+
+// |RenderPass|
 void RenderPassVK::SetInstanceCount(size_t count) {
   instance_count_ = count;
 }
 
 // |RenderPass|
-bool RenderPassVK::SetVertexBuffer(VertexBuffer buffer) {
-  vertex_count_ = buffer.vertex_count;
-  if (buffer.index_type == IndexType::kUnknown || !buffer.vertex_buffer) {
+bool RenderPassVK::SetVertexBuffer(BufferView vertex_buffers[],
+                                   size_t vertex_buffer_count) {
+  if (!ValidateVertexBuffers(vertex_buffers, vertex_buffer_count)) {
     return false;
   }
 
-  if (!command_buffer_->GetEncoder()->Track(buffer.vertex_buffer.buffer)) {
-    return false;
+  vk::Buffer buffers[kMaxVertexBuffers];
+  vk::DeviceSize vertex_buffer_offsets[kMaxVertexBuffers];
+  for (size_t i = 0; i < vertex_buffer_count; i++) {
+    buffers[i] =
+        DeviceBufferVK::Cast(*vertex_buffers[i].GetBuffer()).GetBuffer();
+    vertex_buffer_offsets[i] = vertex_buffers[i].GetRange().offset;
+    std::shared_ptr<const DeviceBuffer> device_buffer =
+        vertex_buffers[i].TakeBuffer();
+    if (device_buffer) {
+      command_buffer_->Track(device_buffer);
+    }
   }
 
-  // Bind the vertex buffer.
-  vk::Buffer vertex_buffer_handle =
-      DeviceBufferVK::Cast(*buffer.vertex_buffer.buffer).GetBuffer();
-  vk::Buffer vertex_buffers[] = {vertex_buffer_handle};
-  vk::DeviceSize vertex_buffer_offsets[] = {buffer.vertex_buffer.range.offset};
-
-  command_buffer_vk_.bindVertexBuffers(0u, 1u, vertex_buffers,
+  // Bind the vertex buffers.
+  command_buffer_vk_.bindVertexBuffers(0u, vertex_buffer_count, buffers,
                                        vertex_buffer_offsets);
 
-  // Bind the index buffer.
-  if (buffer.index_type != IndexType::kNone) {
+  return true;
+}
+
+// |RenderPass|
+bool RenderPassVK::SetIndexBuffer(BufferView index_buffer,
+                                  IndexType index_type) {
+  if (!ValidateIndexBuffer(index_buffer, index_type)) {
+    return false;
+  }
+
+  if (index_type != IndexType::kNone) {
     has_index_buffer_ = true;
-    const BufferView& index_buffer_view = buffer.index_buffer;
+
+    BufferView index_buffer_view = std::move(index_buffer);
     if (!index_buffer_view) {
       return false;
     }
 
-    const std::shared_ptr<const DeviceBuffer>& index_buffer =
-        index_buffer_view.buffer;
-    if (!index_buffer) {
+    if (!index_buffer_view.GetBuffer()) {
       VALIDATION_LOG << "Failed to acquire device buffer"
                      << " for index buffer view";
       return false;
     }
 
-    if (!command_buffer_->GetEncoder()->Track(index_buffer)) {
+    std::shared_ptr<const DeviceBuffer> index_buffer =
+        index_buffer_view.TakeBuffer();
+    if (index_buffer && !command_buffer_->Track(index_buffer)) {
       return false;
     }
 
     vk::Buffer index_buffer_handle =
-        DeviceBufferVK::Cast(*index_buffer).GetBuffer();
+        DeviceBufferVK::Cast(*index_buffer_view.GetBuffer()).GetBuffer();
     command_buffer_vk_.bindIndexBuffer(index_buffer_handle,
-                                       index_buffer_view.range.offset,
-                                       ToVKIndexType(buffer.index_type));
+                                       index_buffer_view.GetRange().offset,
+                                       ToVKIndexType(index_type));
   } else {
     has_index_buffer_ = false;
   }
+
   return true;
 }
 
@@ -446,7 +467,7 @@ fml::Status RenderPassVK::Draw() {
   /// Jank can be completely eliminated by pre-populating known YUV conversion
   /// pipelines.
   if (immutable_sampler_) {
-    std::shared_ptr<PipelineVK> pipeline_variant =
+    std::shared_ptr<Pipeline<PipelineDescriptor>> pipeline_variant =
         PipelineVK::Cast(*pipeline_)
             .CreateVariantForImmutableSamplers(immutable_sampler_);
     if (!pipeline_variant) {
@@ -454,15 +475,14 @@ fml::Status RenderPassVK::Draw() {
           fml::StatusCode::kAborted,
           "Could not create pipeline variant with immutable sampler.");
     }
-    pipeline_ = pipeline_variant.get();
+    pipeline_ = raw_ptr(pipeline_variant);
   }
 
   const auto& context_vk = ContextVK::Cast(*context_);
   const auto& pipeline_vk = PipelineVK::Cast(*pipeline_);
 
-  auto descriptor_result =
-      command_buffer_->GetEncoder()->AllocateDescriptorSets(
-          pipeline_vk.GetDescriptorSetLayout(), context_vk);
+  auto descriptor_result = command_buffer_->AllocateDescriptorSets(
+      pipeline_vk.GetDescriptorSetLayout(), context_vk);
   if (!descriptor_result.ok()) {
     return fml::Status(fml::StatusCode::kAborted,
                        "Could not allocate descriptor sets.");
@@ -495,14 +515,14 @@ fml::Status RenderPassVK::Draw() {
   }
 
   if (has_index_buffer_) {
-    command_buffer_vk_.drawIndexed(vertex_count_,    // index count
+    command_buffer_vk_.drawIndexed(element_count_,   // index count
                                    instance_count_,  // instance count
                                    0u,               // first index
                                    base_vertex_,     // vertex offset
                                    0u                // first instance
     );
   } else {
-    command_buffer_vk_.draw(vertex_count_,    // vertex count
+    command_buffer_vk_.draw(element_count_,   // vertex count
                             instance_count_,  // instance count
                             base_vertex_,     // vertex offset
                             0u                // first instance
@@ -511,7 +531,7 @@ fml::Status RenderPassVK::Draw() {
 
 #ifdef IMPELLER_DEBUG
   if (has_label_) {
-    command_buffer_->GetEncoder()->PopDebugGroup();
+    command_buffer_->PopDebugGroup();
   }
 #endif  // IMPELLER_DEBUG
   has_label_ = false;
@@ -521,8 +541,8 @@ fml::Status RenderPassVK::Draw() {
   descriptor_write_offset_ = 0u;
   instance_count_ = 1u;
   base_vertex_ = 0u;
-  vertex_count_ = 0u;
-  pipeline_ = nullptr;
+  element_count_ = 0u;
+  pipeline_ = PipelineRef(nullptr);
   pipeline_uses_input_attachments_ = false;
   immutable_sampler_ = nullptr;
   return fml::Status();
@@ -533,43 +553,42 @@ fml::Status RenderPassVK::Draw() {
 bool RenderPassVK::BindResource(ShaderStage stage,
                                 DescriptorType type,
                                 const ShaderUniformSlot& slot,
-                                const ShaderMetadata& metadata,
+                                const ShaderMetadata* metadata,
                                 BufferView view) {
   return BindResource(slot.binding, type, view);
 }
 
-bool RenderPassVK::BindResource(
-    ShaderStage stage,
-    DescriptorType type,
-    const ShaderUniformSlot& slot,
-    const std::shared_ptr<const ShaderMetadata>& metadata,
-    BufferView view) {
+bool RenderPassVK::BindDynamicResource(ShaderStage stage,
+                                       DescriptorType type,
+                                       const ShaderUniformSlot& slot,
+                                       std::unique_ptr<ShaderMetadata> metadata,
+                                       BufferView view) {
   return BindResource(slot.binding, type, view);
 }
 
 bool RenderPassVK::BindResource(size_t binding,
                                 DescriptorType type,
-                                const BufferView& view) {
+                                BufferView view) {
   if (bound_buffer_offset_ >= kMaxBindings) {
     return false;
   }
 
-  const std::shared_ptr<const DeviceBuffer>& device_buffer = view.buffer;
-  auto buffer = DeviceBufferVK::Cast(*device_buffer).GetBuffer();
+  auto buffer = DeviceBufferVK::Cast(*view.GetBuffer()).GetBuffer();
   if (!buffer) {
     return false;
   }
 
-  if (!command_buffer_->GetEncoder()->Track(device_buffer)) {
+  std::shared_ptr<const DeviceBuffer> device_buffer = view.TakeBuffer();
+  if (device_buffer && !command_buffer_->Track(device_buffer)) {
     return false;
   }
 
-  uint32_t offset = view.range.offset;
+  uint32_t offset = view.GetRange().offset;
 
   vk::DescriptorBufferInfo buffer_info;
   buffer_info.buffer = buffer;
   buffer_info.offset = offset;
-  buffer_info.range = view.range.length;
+  buffer_info.range = view.GetRange().length;
   buffer_workspace_[bound_buffer_offset_++] = buffer_info;
 
   vk::WriteDescriptorSet write_set;
@@ -582,22 +601,32 @@ bool RenderPassVK::BindResource(size_t binding,
   return true;
 }
 
+bool RenderPassVK::BindDynamicResource(
+    ShaderStage stage,
+    DescriptorType type,
+    const SampledImageSlot& slot,
+    std::unique_ptr<ShaderMetadata> metadata,
+    std::shared_ptr<const Texture> texture,
+    const std::unique_ptr<const Sampler>& sampler) {
+  return BindResource(stage, type, slot, nullptr, texture, sampler);
+}
+
 bool RenderPassVK::BindResource(ShaderStage stage,
                                 DescriptorType type,
                                 const SampledImageSlot& slot,
-                                const ShaderMetadata& metadata,
+                                const ShaderMetadata* metadata,
                                 std::shared_ptr<const Texture> texture,
                                 const std::unique_ptr<const Sampler>& sampler) {
   if (bound_buffer_offset_ >= kMaxBindings) {
     return false;
   }
-  if (!texture->IsValid() || !sampler) {
+  if (!texture || !texture->IsValid() || !sampler) {
     return false;
   }
   const TextureVK& texture_vk = TextureVK::Cast(*texture);
   const SamplerVK& sampler_vk = SamplerVK::Cast(*sampler);
 
-  if (!command_buffer_->GetEncoder()->Track(texture)) {
+  if (!command_buffer_->Track(texture)) {
     return false;
   }
 
@@ -622,7 +651,7 @@ bool RenderPassVK::BindResource(ShaderStage stage,
 }
 
 bool RenderPassVK::OnEncodeCommands(const Context& context) const {
-  command_buffer_->GetEncoder()->GetCommandBuffer().endRenderPass();
+  command_buffer_->GetCommandBuffer().endRenderPass();
 
   // If this render target will be consumed by a subsequent render pass,
   // perform a layout transition to a shader read state.

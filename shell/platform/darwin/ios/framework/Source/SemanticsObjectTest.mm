@@ -7,11 +7,26 @@
 
 #import "flutter/shell/platform/darwin/common/framework/Headers/FlutterMacros.h"
 #import "flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformViews_Internal.h"
+#import "flutter/shell/platform/darwin/ios/framework/Source/FlutterSemanticsScrollView.h"
 #import "flutter/shell/platform/darwin/ios/framework/Source/FlutterTouchInterceptingView_Test.h"
 #import "flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.h"
 #import "flutter/shell/platform/darwin/ios/framework/Source/SemanticsObjectTestMocks.h"
+#import "flutter/shell/platform/darwin/ios/framework/Source/TextInputSemanticsObject.h"
 
 FLUTTER_ASSERT_ARC
+
+const float kFloatCompareEpsilon = 0.001;
+
+@interface SemanticsObject (UIFocusSystem) <UIFocusItem, UIFocusItemContainer>
+@end
+
+@interface FlutterScrollableSemanticsObject (UIFocusItemScrollableContainer) <
+    UIFocusItemScrollableContainer>
+@end
+
+@interface TextInputSemanticsObject (Test)
+- (UIView<UITextInput>*)textInputSurrogate;
+@end
 
 @interface SemanticsObjectTest : XCTestCase
 @end
@@ -313,14 +328,22 @@ FLUTTER_ASSERT_ARC
   [scrollable setSemanticsNode:&node];
   [scrollable accessibilityBridgeDidFinishUpdate];
   UIScrollView* scrollView = [scrollable nativeAccessibility];
-  XCTAssertTrue(
-      CGRectEqualToRect(scrollView.frame, CGRectMake(x * effectivelyScale, y * effectivelyScale,
-                                                     w * effectivelyScale, h * effectivelyScale)));
-  XCTAssertTrue(CGSizeEqualToSize(
-      scrollView.contentSize,
-      CGSizeMake(w * effectivelyScale, (h + scrollExtentMax) * effectivelyScale)));
-  XCTAssertTrue(CGPointEqualToPoint(scrollView.contentOffset,
-                                    CGPointMake(0, scrollPosition * effectivelyScale)));
+
+  XCTAssertEqualWithAccuracy(scrollView.frame.origin.x, x * effectivelyScale, kFloatCompareEpsilon);
+  XCTAssertEqualWithAccuracy(scrollView.frame.origin.y, y * effectivelyScale, kFloatCompareEpsilon);
+  XCTAssertEqualWithAccuracy(scrollView.frame.size.width, w * effectivelyScale,
+                             kFloatCompareEpsilon);
+  XCTAssertEqualWithAccuracy(scrollView.frame.size.height, h * effectivelyScale,
+                             kFloatCompareEpsilon);
+
+  XCTAssertEqualWithAccuracy(scrollView.contentSize.width, w * effectivelyScale,
+                             kFloatCompareEpsilon);
+  XCTAssertEqualWithAccuracy(scrollView.contentSize.height,
+                             (h + scrollExtentMax) * effectivelyScale, kFloatCompareEpsilon);
+
+  XCTAssertEqual(scrollView.contentOffset.x, 0);
+  XCTAssertEqualWithAccuracy(scrollView.contentOffset.y, scrollPosition * effectivelyScale,
+                             kFloatCompareEpsilon);
 }
 
 - (void)testVerticalFlutterScrollableSemanticsObjectNoWindowDoesNotCrash {
@@ -379,14 +402,22 @@ FLUTTER_ASSERT_ARC
   [scrollable setSemanticsNode:&node];
   [scrollable accessibilityBridgeDidFinishUpdate];
   UIScrollView* scrollView = [scrollable nativeAccessibility];
-  XCTAssertTrue(
-      CGRectEqualToRect(scrollView.frame, CGRectMake(x * effectivelyScale, y * effectivelyScale,
-                                                     w * effectivelyScale, h * effectivelyScale)));
-  XCTAssertTrue(CGSizeEqualToSize(
-      scrollView.contentSize,
-      CGSizeMake((w + scrollExtentMax) * effectivelyScale, h * effectivelyScale)));
-  XCTAssertTrue(CGPointEqualToPoint(scrollView.contentOffset,
-                                    CGPointMake(scrollPosition * effectivelyScale, 0)));
+
+  XCTAssertEqualWithAccuracy(scrollView.frame.origin.x, x * effectivelyScale, kFloatCompareEpsilon);
+  XCTAssertEqualWithAccuracy(scrollView.frame.origin.y, y * effectivelyScale, kFloatCompareEpsilon);
+  XCTAssertEqualWithAccuracy(scrollView.frame.size.width, w * effectivelyScale,
+                             kFloatCompareEpsilon);
+  XCTAssertEqualWithAccuracy(scrollView.frame.size.height, h * effectivelyScale,
+                             kFloatCompareEpsilon);
+
+  XCTAssertEqualWithAccuracy(scrollView.contentSize.width, (w + scrollExtentMax) * effectivelyScale,
+                             kFloatCompareEpsilon);
+  XCTAssertEqualWithAccuracy(scrollView.contentSize.height, h * effectivelyScale,
+                             kFloatCompareEpsilon);
+
+  XCTAssertEqualWithAccuracy(scrollView.contentOffset.x, scrollPosition * effectivelyScale,
+                             kFloatCompareEpsilon);
+  XCTAssertEqual(scrollView.contentOffset.y, 0);
 }
 
 - (void)testCanHandleInfiniteScrollExtent {
@@ -417,15 +448,22 @@ FLUTTER_ASSERT_ARC
   [scrollable setSemanticsNode:&node];
   [scrollable accessibilityBridgeDidFinishUpdate];
   UIScrollView* scrollView = [scrollable nativeAccessibility];
-  XCTAssertTrue(
-      CGRectEqualToRect(scrollView.frame, CGRectMake(x * effectivelyScale, y * effectivelyScale,
-                                                     w * effectivelyScale, h * effectivelyScale)));
-  XCTAssertTrue(CGSizeEqualToSize(
-      scrollView.contentSize,
-      CGSizeMake(w * effectivelyScale,
-                 (h + kScrollExtentMaxForInf + scrollPosition) * effectivelyScale)));
-  XCTAssertTrue(CGPointEqualToPoint(scrollView.contentOffset,
-                                    CGPointMake(0, scrollPosition * effectivelyScale)));
+  XCTAssertEqualWithAccuracy(scrollView.frame.origin.x, x * effectivelyScale, kFloatCompareEpsilon);
+  XCTAssertEqualWithAccuracy(scrollView.frame.origin.y, y * effectivelyScale, kFloatCompareEpsilon);
+  XCTAssertEqualWithAccuracy(scrollView.frame.size.width, w * effectivelyScale,
+                             kFloatCompareEpsilon);
+  XCTAssertEqualWithAccuracy(scrollView.frame.size.height, h * effectivelyScale,
+                             kFloatCompareEpsilon);
+
+  XCTAssertEqualWithAccuracy(scrollView.contentSize.width, w * effectivelyScale,
+                             kFloatCompareEpsilon);
+  XCTAssertEqualWithAccuracy(scrollView.contentSize.height,
+                             (h + kScrollExtentMaxForInf + scrollPosition) * effectivelyScale,
+                             kFloatCompareEpsilon);
+
+  XCTAssertEqual(scrollView.contentOffset.x, 0);
+  XCTAssertEqualWithAccuracy(scrollView.contentOffset.y, scrollPosition * effectivelyScale,
+                             kFloatCompareEpsilon);
 }
 
 - (void)testCanHandleNaNScrollExtentAndScrollPoisition {
@@ -456,13 +494,22 @@ FLUTTER_ASSERT_ARC
   [scrollable setSemanticsNode:&node];
   [scrollable accessibilityBridgeDidFinishUpdate];
   UIScrollView* scrollView = [scrollable nativeAccessibility];
-  XCTAssertTrue(
-      CGRectEqualToRect(scrollView.frame, CGRectMake(x * effectivelyScale, y * effectivelyScale,
-                                                     w * effectivelyScale, h * effectivelyScale)));
+
+  XCTAssertEqualWithAccuracy(scrollView.frame.origin.x, x * effectivelyScale, kFloatCompareEpsilon);
+  XCTAssertEqualWithAccuracy(scrollView.frame.origin.y, y * effectivelyScale, kFloatCompareEpsilon);
+  XCTAssertEqualWithAccuracy(scrollView.frame.size.width, w * effectivelyScale,
+                             kFloatCompareEpsilon);
+  XCTAssertEqualWithAccuracy(scrollView.frame.size.height, h * effectivelyScale,
+                             kFloatCompareEpsilon);
+
   // Content size equal to the scrollable size.
-  XCTAssertTrue(CGSizeEqualToSize(scrollView.contentSize,
-                                  CGSizeMake(w * effectivelyScale, h * effectivelyScale)));
-  XCTAssertTrue(CGPointEqualToPoint(scrollView.contentOffset, CGPointMake(0, 0)));
+  XCTAssertEqualWithAccuracy(scrollView.contentSize.width, w * effectivelyScale,
+                             kFloatCompareEpsilon);
+  XCTAssertEqualWithAccuracy(scrollView.contentSize.height, h * effectivelyScale,
+                             kFloatCompareEpsilon);
+
+  XCTAssertEqual(scrollView.contentOffset.x, 0);
+  XCTAssertEqual(scrollView.contentOffset.y, 0);
 }
 
 - (void)testFlutterScrollableSemanticsObjectIsNotHittestable {
@@ -623,7 +670,7 @@ FLUTTER_ASSERT_ARC
   XCTAssertEqual(container.semanticsObject, parentObject);
 }
 
-- (void)testFlutterScrollableSemanticsObjectHidesScrollBar {
+- (void)testFlutterScrollableSemanticsObjectNoScrollBarOrContentInsets {
   fml::WeakPtrFactory<flutter::AccessibilityBridgeIos> factory(
       new flutter::testing::MockAccessibilityBridge());
   fml::WeakPtr<flutter::AccessibilityBridgeIos> bridge = factory.GetWeakPtr();
@@ -643,6 +690,9 @@ FLUTTER_ASSERT_ARC
 
   XCTAssertFalse(scrollView.showsHorizontalScrollIndicator);
   XCTAssertFalse(scrollView.showsVerticalScrollIndicator);
+  XCTAssertEqual(scrollView.contentInsetAdjustmentBehavior,
+                 UIScrollViewContentInsetAdjustmentNever);
+  XCTAssertTrue(UIEdgeInsetsEqualToEdgeInsets(scrollView.contentInset, UIEdgeInsetsZero));
 }
 
 - (void)testSemanticsObjectBuildsAttributedString {
@@ -993,19 +1043,242 @@ FLUTTER_ASSERT_ARC
       new flutter::testing::MockAccessibilityBridge());
   fml::WeakPtr<flutter::testing::MockAccessibilityBridge> bridge = factory.GetWeakPtr();
   __weak FlutterTouchInterceptingView* weakPlatformView;
+  __weak FlutterPlatformViewSemanticsContainer* weakContainer;
   @autoreleasepool {
     FlutterTouchInterceptingView* platformView = [[FlutterTouchInterceptingView alloc] init];
     weakPlatformView = platformView;
-    FlutterPlatformViewSemanticsContainer* container =
-        [[FlutterPlatformViewSemanticsContainer alloc] initWithBridge:bridge
-                                                                  uid:1
-                                                         platformView:platformView];
-    XCTAssertEqualObjects(platformView.accessibilityContainer, container);
+
+    @autoreleasepool {
+      FlutterPlatformViewSemanticsContainer* container =
+          [[FlutterPlatformViewSemanticsContainer alloc] initWithBridge:bridge
+                                                                    uid:1
+                                                           platformView:platformView];
+      weakContainer = container;
+      XCTAssertEqualObjects(platformView.accessibilityContainer, container);
+      XCTAssertNotNil(weakPlatformView);
+      XCTAssertNotNil(weakContainer);
+    }
+    // Check the variables are still lived.
+    // `container` is `retain` in `platformView`, so it will not be nil here.
     XCTAssertNotNil(weakPlatformView);
+    XCTAssertNotNil(weakContainer);
   }
   // Check if there's no more strong references to `platformView` after container and platformView
   // are released.
   XCTAssertNil(weakPlatformView);
+  XCTAssertNil(weakContainer);
 }
 
+- (void)testTextInputSemanticsObject {
+  fml::WeakPtrFactory<flutter::AccessibilityBridgeIos> factory(
+      new flutter::testing::MockAccessibilityBridge());
+  fml::WeakPtr<flutter::AccessibilityBridgeIos> bridge = factory.GetWeakPtr();
+
+  flutter::SemanticsNode node;
+  node.label = "foo";
+  node.flags = static_cast<int32_t>(flutter::SemanticsFlags::kIsTextField) |
+               static_cast<int32_t>(flutter::SemanticsFlags::kIsReadOnly);
+  TextInputSemanticsObject* object = [[TextInputSemanticsObject alloc] initWithBridge:bridge uid:0];
+  [object setSemanticsNode:&node];
+  [object accessibilityBridgeDidFinishUpdate];
+  XCTAssertEqual([object accessibilityTraits], UIAccessibilityTraitNone);
+}
+
+- (void)testTextInputSemanticsObject_canPerformAction {
+  fml::WeakPtrFactory<flutter::AccessibilityBridgeIos> factory(
+      new flutter::testing::MockAccessibilityBridge());
+  fml::WeakPtr<flutter::AccessibilityBridgeIos> bridge = factory.GetWeakPtr();
+
+  flutter::SemanticsNode node;
+  node.label = "foo";
+  node.flags = static_cast<int32_t>(flutter::SemanticsFlags::kIsTextField) |
+               static_cast<int32_t>(flutter::SemanticsFlags::kIsReadOnly);
+  TextInputSemanticsObject* object = [[TextInputSemanticsObject alloc] initWithBridge:bridge uid:0];
+  [object setSemanticsNode:&node];
+  [object accessibilityBridgeDidFinishUpdate];
+
+  id textInputSurrogate = OCMClassMock([UIResponder class]);
+  id partialSemanticsObject = OCMPartialMock(object);
+  OCMStub([partialSemanticsObject textInputSurrogate]).andReturn(textInputSurrogate);
+
+  OCMExpect([textInputSurrogate canPerformAction:[OCMArg anySelector] withSender:OCMOCK_ANY])
+      .andReturn(YES);
+  XCTAssertTrue([partialSemanticsObject canPerformAction:@selector(copy:) withSender:nil]);
+
+  OCMExpect([textInputSurrogate canPerformAction:[OCMArg anySelector] withSender:OCMOCK_ANY])
+      .andReturn(NO);
+  XCTAssertFalse([partialSemanticsObject canPerformAction:@selector(copy:) withSender:nil]);
+}
+
+- (void)testTextInputSemanticsObject_editActions {
+  fml::WeakPtrFactory<flutter::AccessibilityBridgeIos> factory(
+      new flutter::testing::MockAccessibilityBridge());
+  fml::WeakPtr<flutter::AccessibilityBridgeIos> bridge = factory.GetWeakPtr();
+
+  flutter::SemanticsNode node;
+  node.label = "foo";
+  node.flags = static_cast<int32_t>(flutter::SemanticsFlags::kIsTextField) |
+               static_cast<int32_t>(flutter::SemanticsFlags::kIsReadOnly);
+  TextInputSemanticsObject* object = [[TextInputSemanticsObject alloc] initWithBridge:bridge uid:0];
+  [object setSemanticsNode:&node];
+  [object accessibilityBridgeDidFinishUpdate];
+
+  id textInputSurrogate = OCMClassMock([UIResponder class]);
+  id partialSemanticsObject = OCMPartialMock(object);
+  OCMStub([partialSemanticsObject textInputSurrogate]).andReturn(textInputSurrogate);
+
+  XCTestExpectation* copyExpectation =
+      [self expectationWithDescription:@"Surrogate's copy method is called."];
+  XCTestExpectation* cutExpectation =
+      [self expectationWithDescription:@"Surrogate's cut method is called."];
+  XCTestExpectation* pasteExpectation =
+      [self expectationWithDescription:@"Surrogate's paste method is called."];
+  XCTestExpectation* selectAllExpectation =
+      [self expectationWithDescription:@"Surrogate's selectAll method is called."];
+  XCTestExpectation* deleteExpectation =
+      [self expectationWithDescription:@"Surrogate's delete method is called."];
+
+  OCMStub([textInputSurrogate copy:OCMOCK_ANY]).andDo(^(NSInvocation* invocation) {
+    [copyExpectation fulfill];
+  });
+  OCMStub([textInputSurrogate cut:OCMOCK_ANY]).andDo(^(NSInvocation* invocation) {
+    [cutExpectation fulfill];
+  });
+  OCMStub([textInputSurrogate paste:OCMOCK_ANY]).andDo(^(NSInvocation* invocation) {
+    [pasteExpectation fulfill];
+  });
+  OCMStub([textInputSurrogate selectAll:OCMOCK_ANY]).andDo(^(NSInvocation* invocation) {
+    [selectAllExpectation fulfill];
+  });
+  OCMStub([textInputSurrogate delete:OCMOCK_ANY]).andDo(^(NSInvocation* invocation) {
+    [deleteExpectation fulfill];
+  });
+
+  [partialSemanticsObject copy:nil];
+  [partialSemanticsObject cut:nil];
+  [partialSemanticsObject paste:nil];
+  [partialSemanticsObject selectAll:nil];
+  [partialSemanticsObject delete:nil];
+
+  [self waitForExpectationsWithTimeout:1 handler:nil];
+}
+
+- (void)testSliderSemanticsObject {
+  fml::WeakPtrFactory<flutter::AccessibilityBridgeIos> factory(
+      new flutter::testing::MockAccessibilityBridge());
+  fml::WeakPtr<flutter::AccessibilityBridgeIos> bridge = factory.GetWeakPtr();
+
+  flutter::SemanticsNode node;
+  node.flags = static_cast<int32_t>(flutter::SemanticsFlags::kIsSlider);
+  SemanticsObject* object = [[SemanticsObject alloc] initWithBridge:bridge uid:0];
+  [object setSemanticsNode:&node];
+  [object accessibilityBridgeDidFinishUpdate];
+  XCTAssertEqual([object accessibilityActivate], YES);
+}
+
+- (void)testUIFocusItemConformance {
+  fml::WeakPtrFactory<flutter::AccessibilityBridgeIos> factory(
+      new flutter::testing::MockAccessibilityBridge());
+  fml::WeakPtr<flutter::AccessibilityBridgeIos> bridge = factory.GetWeakPtr();
+  SemanticsObject* parent = [[SemanticsObject alloc] initWithBridge:bridge uid:0];
+  SemanticsObject* child = [[SemanticsObject alloc] initWithBridge:bridge uid:1];
+  parent.children = @[ child ];
+
+  // parentFocusEnvironment
+  XCTAssertTrue([parent.parentFocusEnvironment isKindOfClass:[UIView class]]);
+  XCTAssertEqual(child.parentFocusEnvironment, child.parent);
+
+  // canBecomeFocused
+  flutter::SemanticsNode childNode;
+  childNode.flags = static_cast<int32_t>(flutter::SemanticsFlags::kIsHidden);
+  childNode.actions = static_cast<int32_t>(flutter::SemanticsAction::kTap);
+  [child setSemanticsNode:&childNode];
+  XCTAssertFalse(child.canBecomeFocused);
+  childNode.flags = 0;
+  [child setSemanticsNode:&childNode];
+  XCTAssertTrue(child.canBecomeFocused);
+  childNode.actions = 0;
+  [child setSemanticsNode:&childNode];
+  XCTAssertFalse(child.canBecomeFocused);
+
+  CGFloat scale = ((bridge->view().window.screen ?: UIScreen.mainScreen)).scale;
+
+  childNode.rect = SkRect::MakeXYWH(0, 0, 100 * scale, 100 * scale);
+  [child setSemanticsNode:&childNode];
+  flutter::SemanticsNode parentNode;
+  parentNode.rect = SkRect::MakeXYWH(0, 0, 200, 200);
+  [parent setSemanticsNode:&parentNode];
+
+  XCTAssertTrue(CGRectEqualToRect(child.frame, CGRectMake(0, 0, 100, 100)));
+}
+
+- (void)testUIFocusItemContainerConformance {
+  fml::WeakPtrFactory<flutter::AccessibilityBridgeIos> factory(
+      new flutter::testing::MockAccessibilityBridge());
+  fml::WeakPtr<flutter::AccessibilityBridgeIos> bridge = factory.GetWeakPtr();
+  SemanticsObject* parent = [[SemanticsObject alloc] initWithBridge:bridge uid:0];
+  SemanticsObject* child1 = [[SemanticsObject alloc] initWithBridge:bridge uid:1];
+  SemanticsObject* child2 = [[SemanticsObject alloc] initWithBridge:bridge uid:2];
+  parent.childrenInHitTestOrder = @[ child1, child2 ];
+
+  // focusItemsInRect
+  NSArray<id<UIFocusItem>>* itemsInRect = [parent focusItemsInRect:CGRectMake(0, 0, 100, 100)];
+  XCTAssertEqual(itemsInRect.count, (unsigned long)2);
+  XCTAssertTrue([itemsInRect containsObject:child1]);
+  XCTAssertTrue([itemsInRect containsObject:child2]);
+}
+
+- (void)testUIFocusItemScrollableContainerConformance {
+  fml::WeakPtrFactory<flutter::AccessibilityBridgeIos> factory(
+      new flutter::testing::MockAccessibilityBridge());
+  fml::WeakPtr<flutter::testing::MockAccessibilityBridge> bridge = factory.GetWeakPtr();
+  FlutterScrollableSemanticsObject* scrollable =
+      [[FlutterScrollableSemanticsObject alloc] initWithBridge:bridge uid:5];
+
+  // setContentOffset
+  CGPoint p = CGPointMake(123.0, 456.0);
+  [scrollable.scrollView scrollViewWillEndDragging:scrollable.scrollView
+                                      withVelocity:CGPointZero
+                               targetContentOffset:&p];
+  scrollable.scrollView.contentOffset = p;
+  [scrollable.scrollView scrollViewDidEndDecelerating:scrollable.scrollView];
+  XCTAssertEqual(bridge->observations.size(), (size_t)1);
+  XCTAssertEqual(bridge->observations[0].id, 5);
+  XCTAssertEqual(bridge->observations[0].action, flutter::SemanticsAction::kScrollToOffset);
+
+  std::vector<uint8_t> args = bridge->observations[0].args;
+  XCTAssertEqual(args.size(), 3 * sizeof(CGFloat));
+
+  NSData* encoded = [NSData dataWithBytes:args.data() length:args.size()];
+  FlutterStandardTypedData* decoded = [[FlutterStandardMessageCodec sharedInstance] decode:encoded];
+  CGPoint point = CGPointZero;
+  memcpy(&point, decoded.data.bytes, decoded.data.length);
+  XCTAssertTrue(CGPointEqualToPoint(point, p));
+}
+
+- (void)testUIFocusItemScrollableContainerNoFeedbackLoops {
+  fml::WeakPtrFactory<flutter::AccessibilityBridgeIos> factory(
+      new flutter::testing::MockAccessibilityBridge());
+  fml::WeakPtr<flutter::testing::MockAccessibilityBridge> bridge = factory.GetWeakPtr();
+  FlutterScrollableSemanticsObject* scrollable =
+      [[FlutterScrollableSemanticsObject alloc] initWithBridge:bridge uid:5];
+
+  // setContentOffset
+  const CGPoint p = CGPointMake(0.0, 456.0);
+  scrollable.scrollView.contentOffset = p;
+  bridge->observations.clear();
+
+  const SkScalar scrollPosition = p.y + 0.0000000000000001;
+  flutter::SemanticsNode node;
+  node.flags = static_cast<int32_t>(flutter::SemanticsFlags::kHasImplicitScrolling);
+  node.actions = flutter::kVerticalScrollSemanticsActions;
+  node.rect = SkRect::MakeXYWH(0, 0, 100, 200);
+  node.scrollExtentMax = 10000;
+  node.scrollPosition = scrollPosition;
+  node.transform = {1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 0, scrollPosition, 0, 1.0};
+  [scrollable setSemanticsNode:&node];
+  [scrollable accessibilityBridgeDidFinishUpdate];
+
+  XCTAssertEqual(bridge->observations.size(), (size_t)0);
+}
 @end

@@ -7,11 +7,8 @@
 
 #include <emscripten/threading.h>
 #include <cinttypes>
+#include "surface.h"
 #include "third_party/skia/include/core/SkPicture.h"
-
-namespace Skwasm {
-class Surface;
-}
 
 using SkwasmObject = __externref_t;
 
@@ -22,8 +19,7 @@ extern void skwasm_setAssociatedObjectOnThread(unsigned long threadId,
 extern SkwasmObject skwasm_getAssociatedObject(void* pointer);
 extern void skwasm_disposeAssociatedObjectOnThread(unsigned long threadId,
                                                    void* pointer);
-extern void skwasm_registerMessageListener(pthread_t threadId);
-extern void skwasm_syncTimeOriginForThread(pthread_t threadId);
+extern void skwasm_connectThread(pthread_t threadId);
 extern void skwasm_dispatchRenderPictures(unsigned long threadId,
                                           Skwasm::Surface* surface,
                                           sk_sp<SkPicture>* pictures,
@@ -43,6 +39,16 @@ extern unsigned int skwasm_createGlTextureFromTextureSource(
     SkwasmObject textureSource,
     int width,
     int height);
+extern void skwasm_dispatchDisposeSurface(unsigned long threadId,
+                                          Skwasm::Surface* surface);
+extern void skwasm_dispatchRasterizeImage(unsigned long threadId,
+                                          Skwasm::Surface* surface,
+                                          SkImage* image,
+                                          Skwasm::ImageByteFormat format,
+                                          uint32_t callbackId);
+extern void skwasm_postRasterizeResult(Skwasm::Surface* surface,
+                                       SkData* data,
+                                       uint32_t callbackId);
 }
 
 #endif  // FLUTTER_LIB_WEB_UI_SKWASM_SKWASM_SUPPORT_H_

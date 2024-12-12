@@ -7,7 +7,6 @@
 
 #include <cstdint>
 
-#include "impeller/core/capture.h"
 #include "impeller/entity/contents/contents.h"
 #include "impeller/geometry/color.h"
 #include "impeller/geometry/matrix.h"
@@ -33,7 +32,8 @@ class Entity {
     /// rather than local space, and so some filters (namely,
     /// MatrixFilterContents) need to interpret the given EffectTransform as the
     /// current transform matrix.
-    kSubpass,
+    kSubpassAppendSnapshotTransform,
+    kSubpassPrependSnapshotTransform,
   };
 
   /// An enum to define how to repeat, fold, or omit colors outside of the
@@ -73,6 +73,8 @@ class Entity {
 
   Entity(Entity&&);
 
+  Entity& operator=(Entity&&);
+
   /// @brief  Get the global transform matrix for this Entity.
   const Matrix& GetTransform() const;
 
@@ -90,24 +92,13 @@ class Entity {
 
   std::optional<Rect> GetCoverage() const;
 
-  Contents::ClipCoverage GetClipCoverage(
-      const std::optional<Rect>& current_clip_coverage) const;
-
-  bool ShouldRender(const std::optional<Rect>& clip_coverage) const;
-
   void SetContents(std::shared_ptr<Contents> contents);
 
   const std::shared_ptr<Contents>& GetContents() const;
 
   void SetClipDepth(uint32_t clip_depth);
 
-  void IncrementStencilDepth(uint32_t increment);
-
   uint32_t GetClipDepth() const;
-
-  void SetNewClipDepth(uint32_t clip_depth);
-
-  uint32_t GetNewClipDepth() const;
 
   float GetShaderClipDepth() const;
 
@@ -121,17 +112,9 @@ class Entity {
 
   static bool IsBlendModeDestructive(BlendMode blend_mode);
 
-  bool CanInheritOpacity() const;
-
   bool SetInheritedOpacity(Scalar alpha);
 
   std::optional<Color> AsBackgroundColor(ISize target_size) const;
-
-  Scalar DeriveTextScale() const;
-
-  Capture& GetCapture() const;
-
-  void SetCapture(Capture capture) const;
 
   Entity Clone() const;
 
@@ -141,9 +124,7 @@ class Entity {
   Matrix transform_;
   std::shared_ptr<Contents> contents_;
   BlendMode blend_mode_ = BlendMode::kSourceOver;
-  uint32_t clip_depth_ = 0u;
-  uint32_t new_clip_depth_ = 1u;
-  mutable Capture capture_;
+  uint32_t clip_depth_ = 1u;
 };
 
 }  // namespace impeller

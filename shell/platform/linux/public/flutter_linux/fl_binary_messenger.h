@@ -28,7 +28,6 @@ G_BEGIN_DECLS
 
 typedef enum {
   // Part of the public API, so fixing the name is a breaking change.
-  // NOLINTNEXTLINE(readability-identifier-naming)
   FL_BINARY_MESSENGER_ERROR_ALREADY_RESPONDED,
 } FlBinaryMessengerError;
 
@@ -104,6 +103,8 @@ struct _FlBinaryMessengerInterface {
   void (*set_warns_on_channel_overflow)(FlBinaryMessenger* messenger,
                                         const gchar* channel,
                                         bool warns);
+
+  void (*shutdown)(FlBinaryMessenger* messenger);
 };
 
 struct _FlBinaryMessengerResponseHandleClass {

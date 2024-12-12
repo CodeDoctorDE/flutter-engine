@@ -51,7 +51,7 @@ final class LintCommand extends CommandBase {
     ]);
     _linters[Linter.java] =
         _LinterDescription(Linter.java, environment.engine.flutterDir, <String>[
-      findDartBinary(environment), '--disable-dart-dev',
+      findDartBinary(environment),
       p.join(engineFlutterPath, 'tools', 'android_lint', 'bin', 'main.dart'),
     ]);
     _linters[Linter.c] = _LinterDescription(
@@ -84,7 +84,6 @@ final class LintCommand extends CommandBase {
     if (environment.platform.isWindows) {
       environment.logger
           .fatal('lint command is not supported on Windows (for now).');
-      return 1;
     }
     final WorkerPool wp =
         WorkerPool(environment, ProcessTaskProgressReporter(environment));

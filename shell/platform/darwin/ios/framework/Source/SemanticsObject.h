@@ -10,6 +10,7 @@
 #include "flutter/fml/macros.h"
 #include "flutter/fml/memory/weak_ptr.h"
 #include "flutter/lib/ui/semantics/semantics_node.h"
+#import "flutter/shell/platform/darwin/ios/framework/Source/FlutterSemanticsScrollView.h"
 #import "flutter/shell/platform/darwin/ios/framework/Source/accessibility_bridge_ios.h"
 
 constexpr int32_t kRootNodeId = 0;
@@ -38,7 +39,7 @@ constexpr float kScrollExtentMaxForInf = 1000;
  * The parent of this node in the node tree. Will be nil for the root node and
  * during transient state changes.
  */
-@property(nonatomic, assign) SemanticsObject* parent;
+@property(nonatomic, weak, readonly) SemanticsObject* parent;
 
 /**
  * The accessibility bridge that this semantics object is attached to. This
@@ -64,13 +65,13 @@ constexpr float kScrollExtentMaxForInf = 1000;
  * Direct children of this semantics object. Each child's `parent` property must
  * be equal to this object.
  */
-@property(nonatomic, strong) NSArray<SemanticsObject*>* children;
+@property(nonatomic, copy) NSArray<SemanticsObject*>* children;
 
 /**
  * Direct children of this semantics object in hit test order. Each child's `parent` property
  * must be equal to this object.
  */
-@property(nonatomic, strong) NSArray<SemanticsObject*>* childrenInHitTestOrder;
+@property(nonatomic, copy) NSArray<SemanticsObject*>* childrenInHitTestOrder;
 
 /**
  * The UIAccessibility that represents this object.
@@ -186,7 +187,7 @@ constexpr float kScrollExtentMaxForInf = 1000;
 /// The semantics object for scrollable. This class creates an UIScrollView to interact with the
 /// iOS.
 @interface FlutterScrollableSemanticsObject : SemanticsObject
-
+@property(nonatomic, readonly) FlutterSemanticsScrollView* scrollView;
 @end
 
 /**

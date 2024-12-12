@@ -10,22 +10,23 @@
 #include <vector>
 
 #include "impeller/core/formats.h"
+#include "impeller/core/host_buffer.h"
+#include "impeller/core/vertex_buffer.h"
 #include "impeller/geometry/path.h"
 #include "impeller/geometry/point.h"
 #include "impeller/geometry/trig.h"
 
-struct TESStesselator;
-
 namespace impeller {
 
-void DestroyTessellator(TESStesselator* tessellator);
-
-using CTessellator =
-    std::unique_ptr<TESStesselator, decltype(&DestroyTessellator)>;
+/// The size of the point arena buffer stored on the tessellator.
+static constexpr size_t kPointArenaSize = 4096u;
 
 //------------------------------------------------------------------------------
 /// @brief      A utility that generates triangles of the specified fill type
 ///             given a polyline. This happens on the CPU.
+///
+///             Also contains functionality for optimized generation of circles
+///             and ellipses.
 ///
 ///             This object is not thread safe, and its methods must not be
 ///             called from multiple threads.
@@ -171,46 +172,55 @@ class Tessellator {
 
   Tessellator();
 
-  ~Tessellator();
-
-  /// @brief A callback that returns the results of the tessellation.
-  ///
-  ///        The index buffer may not be populated, in which case [indices] will
-  ///        be nullptr and indices_count will be 0.
-  using BuilderCallback = std::function<bool(const float* vertices,
-                                             size_t vertices_count,
-                                             const uint16_t* indices,
-                                             size_t indices_count)>;
-
-  //----------------------------------------------------------------------------
-  /// @brief      Generates filled triangles from the path. A callback is
-  ///             invoked once for the entire tessellation.
-  ///
-  /// @param[in]  path  The path to tessellate.
-  /// @param[in]  tolerance  The tolerance value for conversion of the path to
-  ///                        a polyline. This value is often derived from the
-  ///                        Matrix::GetMaxBasisLength of the CTM applied to the
-  ///                        path for rendering.
-  /// @param[in]  callback  The callback, return false to indicate failure.
-  ///
-  /// @return The result status of the tessellation.
-  ///
-  Tessellator::Result Tessellate(const Path& path,
-                                 Scalar tolerance,
-                                 const BuilderCallback& callback);
+  virtual ~Tessellator();
 
   //----------------------------------------------------------------------------
   /// @brief      Given a convex path, create a triangle fan structure.
   ///
   /// @param[in]  path  The path to tessellate.
+  /// @param[in]  host_buffer  The host buffer for allocation of vertices/index
+  ///                          data.
   /// @param[in]  tolerance  The tolerance value for conversion of the path to
   ///                        a polyline. This value is often derived from the
-  ///                        Matrix::GetMaxBasisLength of the CTM applied to the
-  ///                        path for rendering.
+  ///                        Matrix::GetMaxBasisLengthXY of the CTM applied to
+  ///                        the path for rendering.
   ///
-  /// @return A point vector containing the vertices in triangle strip format.
+  /// @return A vertex buffer containing all data from the provided curve.
+  VertexBuffer TessellateConvex(const Path& path,
+                                HostBuffer& host_buffer,
+                                Scalar tolerance,
+                                bool supports_primitive_restart = false,
+                                bool supports_triangle_fan = false);
+
+  //----------------------------------------------------------------------------
+  /// @brief      Given a path, create a line strip primitive structure.
   ///
-  std::vector<Point> TessellateConvex(const Path& path, Scalar tolerance);
+  ///             A line strip is a series of vertices that draws a line
+  ///             rendered at a specified width (in our case, always 1.0
+  ///             physical pixel) that is tessellated by the rasterizer. See
+  ///             also PrimitiveType::kLineStrip.
+  ///
+  /// @param[in]  path  The path to tessellate.
+  /// @param[in]  host_buffer  The host buffer for allocation of vertices/index
+  ///                          data.
+  /// @param[in]  tolerance  The tolerance value for conversion of the path to
+  ///                        a polyline. This value is often derived from the
+  ///                        Matrix::GetMaxBasisLengthXY of the CTM applied to
+  ///                        the path for rendering.
+  ///
+  /// @return A vertex buffer containing all data from the provided curve.
+  VertexBuffer GenerateLineStrip(const Path& path,
+                                 HostBuffer& host_buffer,
+                                 Scalar tolerance);
+
+  /// Visible for testing.
+  ///
+  /// This method only exists for the ease of benchmarking without using the
+  /// real allocator needed by the [host_buffer].
+  static void TessellateConvexInternal(const Path& path,
+                                       std::vector<Point>& point_buffer,
+                                       std::vector<uint16_t>& index_buffer,
+                                       Scalar tolerance);
 
   //----------------------------------------------------------------------------
   /// @brief      Create a temporary polyline. Only one per-process can exist at
@@ -296,12 +306,18 @@ class Tessellator {
                                             const Rect& bounds,
                                             const Size& radii);
 
- private:
+  /// Retrieve a pre-allocated arena of kPointArenaSize points.
+  std::vector<Point>& GetStrokePointCache();
+
+ protected:
   /// Used for polyline generation.
   std::unique_ptr<std::vector<Point>> point_buffer_;
-  CTessellator c_tessellator_;
+  std::unique_ptr<std::vector<uint16_t>> index_buffer_;
+  /// Used for stroke path generation.
+  std::vector<Point> stroke_points_;
 
-  // Data for variouos Circle/EllipseGenerator classes, cached per
+ private:
+  // Data for various Circle/EllipseGenerator classes, cached per
   // Tessellator instance which is usually the foreground life of an app
   // if not longer.
   static constexpr size_t kCachedTrigCount = 300;

@@ -5,7 +5,7 @@ import 'dart:math' as math;
 
 import 'package:ui/ui.dart' as ui;
 
-import '../../engine.dart' show PlatformViewManager, longestIncreasingSubsequence;
+import '../../engine.dart' show PlatformViewManager, configuration, longestIncreasingSubsequence;
 import '../display.dart';
 import '../dom.dart';
 import '../html/path_to_svg_clip.dart';
@@ -14,6 +14,7 @@ import '../svg.dart';
 import '../util.dart';
 import '../vector_math.dart';
 import 'canvas.dart';
+import 'layer.dart';
 import 'overlay_scene_optimizer.dart';
 import 'painting.dart';
 import 'path.dart';
@@ -49,7 +50,7 @@ class HtmlViewEmbedder {
 
   /// The maximum number of render canvases to create. Too many canvases can
   /// cause a performance burden.
-  static const int maximumCanvases = 8;
+  static int get maximumCanvases => configuration.canvasKitMaximumSurfaces;
 
   /// The views that need to be recomposited into the scene on the next frame.
   final Set<int> _viewsToRecomposite = <int>{};
@@ -63,36 +64,29 @@ class HtmlViewEmbedder {
   /// The most recent rendering.
   Rendering _activeRendering = Rendering();
 
+  /// Returns the most recent rendering. Only used in tests.
+  Rendering get debugActiveRendering => _activeRendering;
+
+  /// If [debugOverlayOptimizationBounds] is true, this canvas will draw
+  /// semitransparent rectangles showing the computed bounds of the platform
+  /// views and pictures in the scene.
   DisplayCanvas? debugBoundsCanvas;
 
   /// The size of the frame, in physical pixels.
-  late ui.Size _frameSize;
+  late BitmapSize _frameSize;
 
-  set frameSize(ui.Size size) {
+  set frameSize(BitmapSize size) {
     _frameSize = size;
   }
 
-  /// Returns a list of canvases which will be overlaid on top of the "base"
-  /// canvas after a platform view is composited into the scene.
-  ///
-  /// The engine asks for the overlay canvases immediately before the paint
-  /// phase, after the preroll phase. In the preroll phase we must be
-  /// conservative and assume that every platform view which is prerolled is
-  /// also composited, and therefore requires an overlay canvas. However, not
-  /// every platform view which is prerolled ends up being composited (it may be
-  /// clipped out and not actually drawn). This means that we may end up
-  /// overallocating canvases. This isn't a problem in practice, however, as
-  /// unused recording canvases are simply deleted at the end of the frame.
-  Iterable<CkCanvas> getOverlayCanvases() {
-    return _context.pictureRecordersCreatedDuringPreroll
+  /// Returns a list of canvases for the optimized rendering. These are used in
+  /// the paint step.
+  Iterable<CkCanvas> getOptimizedCanvases() {
+    return _context.optimizedCanvasRecorders!
         .map((CkPictureRecorder r) => r.recordingCanvas!);
   }
 
   void prerollCompositeEmbeddedView(int viewId, EmbeddedViewParams params) {
-    final CkPictureRecorder pictureRecorder = CkPictureRecorder();
-    pictureRecorder.beginRecording(ui.Offset.zero & _frameSize);
-    _context.pictureRecordersCreatedDuringPreroll.add(pictureRecorder);
-
     // Do nothing if the params didn't change.
     if (_currentCompositionParams[viewId] == params) {
       // If the view was prerolled but not composited, then it needs to be
@@ -106,30 +100,24 @@ class HtmlViewEmbedder {
     _viewsToRecomposite.add(viewId);
   }
 
+  /// Adds the picture recorder associated with [picture] to the unoptimized
+  /// scene.
+  void addPictureToUnoptimizedScene(PictureLayer picture) {
+    _context.sceneElements.add(PictureSceneElement(picture));
+  }
+
   /// Prepares to composite [viewId].
-  ///
-  /// If this returns a [CkCanvas], then that canvas should be the new leaf
-  /// node. Otherwise, keep the same leaf node.
-  CkCanvas? compositeEmbeddedView(int viewId) {
+  void compositeEmbeddedView(int viewId) {
     // Ensure platform view with `viewId` is injected into the `rasterizer.view`.
     rasterizer.view.dom.injectPlatformView(viewId);
 
-    final int overlayIndex = _context.viewCount;
     _compositionOrder.add(viewId);
-    _context.viewCount++;
-
-    CkPictureRecorder? recorderToUseForRendering;
-    if (overlayIndex < _context.pictureRecordersCreatedDuringPreroll.length) {
-      recorderToUseForRendering =
-          _context.pictureRecordersCreatedDuringPreroll[overlayIndex];
-      _context.pictureRecorders.add(recorderToUseForRendering);
-    }
+    _context.sceneElements.add(PlatformViewSceneElement(viewId));
 
     if (_viewsToRecomposite.contains(viewId)) {
       _compositeWithParams(viewId, _currentCompositionParams[viewId]!);
       _viewsToRecomposite.remove(viewId);
     }
-    return recorderToUseForRendering?.recordingCanvas;
   }
 
   void _compositeWithParams(int platformViewId, EmbeddedViewParams params) {
@@ -278,7 +266,7 @@ class HtmlViewEmbedder {
             final SVGClipPathElement newClipPath = createSVGClipPathElement();
             newClipPath.id = clipId;
             newClipPath.append(
-                createSVGPathElement()..setAttribute('d', path.toSvgString()!));
+                createSVGPathElement()..setAttribute('d', path.toSvgString()));
 
             pathDefs.append(newClipPath);
             // Store the id of the node instead of [newClipPath] directly. For
@@ -296,7 +284,7 @@ class HtmlViewEmbedder {
             final SVGClipPathElement newClipPath = createSVGClipPathElement();
             newClipPath.id = clipId;
             newClipPath.append(
-                createSVGPathElement()..setAttribute('d', path.toSvgString()!));
+                createSVGPathElement()..setAttribute('d', path.toSvgString()));
             pathDefs.append(newClipPath);
             // Store the id of the node instead of [newClipPath] directly. For
             // some reason, calling `newClipPath.remove()` doesn't remove it
@@ -352,14 +340,41 @@ class HtmlViewEmbedder {
     sceneHost.append(_svgPathDefs!);
   }
 
-  Future<void> submitFrame(CkPicture basePicture) async {
-    final List<CkPicture> pictures = <CkPicture>[basePicture];
-    for (final CkPictureRecorder recorder in _context.pictureRecorders) {
-      pictures.add(recorder.endRecording());
-    }
+  /// Optimizes the scene to use the fewest possible canvases. This sets up
+  /// the final paint pass to paint the pictures into the optimized canvases.
+  void optimizeRendering() {
     Rendering rendering = createOptimizedRendering(
-        pictures, _compositionOrder, _currentCompositionParams);
+        _context.sceneElements, _currentCompositionParams);
     rendering = _modifyRenderingForMaxCanvases(rendering);
+    _context.optimizedRendering = rendering;
+    // Create new picture recorders for the optimized render canvases and record
+    // which pictures go in which canvas.
+    final List<CkPictureRecorder> optimizedCanvasRecorders =
+        <CkPictureRecorder>[];
+    final Map<PictureLayer, CkPictureRecorder> pictureToOptimizedCanvasMap =
+        <PictureLayer, CkPictureRecorder>{};
+    for (final RenderingRenderCanvas renderCanvas in rendering.canvases) {
+      final CkPictureRecorder pictureRecorder = CkPictureRecorder();
+      pictureRecorder.beginRecording(ui.Offset.zero & _frameSize.toSize());
+      optimizedCanvasRecorders.add(pictureRecorder);
+      for (final PictureLayer picture in renderCanvas.pictures) {
+        pictureToOptimizedCanvasMap[picture] =
+            pictureRecorder;
+      }
+    }
+    _context.optimizedCanvasRecorders = optimizedCanvasRecorders;
+    _context.pictureToOptimizedCanvasMap = pictureToOptimizedCanvasMap;
+  }
+
+  /// Returns the canvas that this picture layer should draw into in the
+  /// optimized scene.
+  CkCanvas getOptimizedCanvasFor(PictureLayer picture) {
+    assert(_context.optimizedRendering != null);
+    return _context.pictureToOptimizedCanvasMap![picture]!.recordingCanvas!;
+  }
+
+  Future<void> submitFrame() async {
+    final Rendering rendering = _context.optimizedRendering!;
     _updateDomForNewRendering(rendering);
     if (rendering.equalsForRendering(_activeRendering)) {
       // Copy the display canvases to the new rendering.
@@ -372,13 +387,18 @@ class HtmlViewEmbedder {
     _activeRendering = rendering;
 
     final List<RenderingRenderCanvas> renderCanvases = rendering.canvases;
+    int renderCanvasIndex = 0;
     for (final RenderingRenderCanvas renderCanvas in renderCanvases) {
+      final CkPicture renderPicture = _context
+          .optimizedCanvasRecorders![renderCanvasIndex++]
+          .endRecording();
       await rasterizer.rasterizeToCanvas(
-          renderCanvas.displayCanvas!, renderCanvas.pictures);
+          renderCanvas.displayCanvas!, <CkPicture>[renderPicture]);
+      renderPicture.dispose();
     }
 
     for (final CkPictureRecorder recorder
-        in _context.pictureRecordersCreatedDuringPreroll) {
+        in _context.measuringPictureRecorders.values) {
       if (recorder.isRecording) {
         recorder.endRecording();
       }
@@ -390,7 +410,13 @@ class HtmlViewEmbedder {
       debugBoundsCanvas ??= rasterizer.displayFactory.getCanvas();
       final CkPictureRecorder boundsRecorder = CkPictureRecorder();
       final CkCanvas boundsCanvas = boundsRecorder.beginRecording(
-          ui.Rect.fromLTWH(0, 0, _frameSize.width, _frameSize.height));
+        ui.Rect.fromLTWH(
+          0,
+          0,
+          _frameSize.width.toDouble(),
+          _frameSize.height.toDouble(),
+        ),
+      );
       final CkPaint platformViewBoundsPaint = CkPaint()
         ..color = const ui.Color.fromARGB(100, 0, 255, 0);
       final CkPaint pictureBoundsPaint = CkPaint()
@@ -402,8 +428,8 @@ class HtmlViewEmbedder {
                 entity.debugComputedBounds!, platformViewBoundsPaint);
           }
         } else if (entity is RenderingRenderCanvas) {
-          for (final CkPicture picture in entity.pictures) {
-            boundsCanvas.drawRect(picture.cullRect, pictureBoundsPaint);
+          for (final PictureLayer picture in entity.pictures) {
+            boundsCanvas.drawRect(picture.sceneBounds!, pictureBoundsPaint);
           }
         }
       }
@@ -474,16 +500,15 @@ class HtmlViewEmbedder {
       return rendering;
     }
     int numCanvasesToDelete = numCanvases - maximumCanvases;
-    final List<CkPicture> picturesForLastCanvas = <CkPicture>[];
+    final List<PictureLayer> picturesForLastCanvas = <PictureLayer>[];
     final List<RenderingEntity> modifiedEntities =
         List<RenderingEntity>.from(rendering.entities);
     bool sawLastCanvas = false;
-    for (int i = rendering.entities.length - 1; i > 0; i--) {
+    for (int i = rendering.entities.length - 1; i >= 0; i--) {
       final RenderingEntity entity = modifiedEntities[i];
       if (entity is RenderingRenderCanvas) {
         if (!sawLastCanvas) {
           sawLastCanvas = true;
-          picturesForLastCanvas.insertAll(0, entity.pictures);
           continue;
         }
         modifiedEntities.removeAt(i);
@@ -494,14 +519,18 @@ class HtmlViewEmbedder {
         }
       }
     }
-    // Replace the pictures in the last canvas with all the pictures from the
-    // deleted canvases.
+
+    // Add all the pictures from the deleted canvases to the second-to-last
+    // canvas (or the last canvas if there is only one).
+    sawLastCanvas = (maximumCanvases == 1);
     for (int i = modifiedEntities.length - 1; i > 0; i--) {
       final RenderingEntity entity = modifiedEntities[i];
       if (entity is RenderingRenderCanvas) {
-        entity.pictures.clear();
-        entity.pictures.addAll(picturesForLastCanvas);
-        break;
+        if (sawLastCanvas) {
+          entity.pictures.addAll(picturesForLastCanvas);
+          break;
+        }
+        sawLastCanvas = true;
       }
     }
 
@@ -832,8 +861,6 @@ class Mutator {
         return matrix == typedOther.matrix;
       case MutatorType.opacity:
         return alpha == typedOther.alpha;
-      default:
-        return false;
     }
   }
 
@@ -893,20 +920,40 @@ class MutatorsStack extends Iterable<Mutator> {
   Iterable<Mutator> get reversed => _mutators;
 }
 
+sealed class SceneElement {}
+
+class PictureSceneElement extends SceneElement {
+  PictureSceneElement(this.picture);
+
+  final PictureLayer picture;
+}
+
+class PlatformViewSceneElement extends SceneElement {
+  PlatformViewSceneElement(this.viewId);
+
+  final int viewId;
+}
+
 /// The state for the current frame.
 class EmbedderFrameContext {
-  /// Picture recorders which were created during the preroll phase.
-  ///
-  /// These picture recorders will be "claimed" in the paint phase by platform
-  /// views being composited into the scene.
-  final List<CkPictureRecorder> pictureRecordersCreatedDuringPreroll =
-      <CkPictureRecorder>[];
+  /// Picture recorders which were created d the final bounds of the picture in the scene.
+  final Map<PictureLayer, CkPictureRecorder> measuringPictureRecorders =
+      <PictureLayer, CkPictureRecorder>{};
 
-  /// Picture recorders which were actually used in the paint phase.
-  ///
-  /// This is a subset of [_pictureRecordersCreatedDuringPreroll].
-  final List<CkPictureRecorder> pictureRecorders = <CkPictureRecorder>[];
+  /// List of picture recorders and platform view ids in the order they were
+  /// painted.
+  final List<SceneElement> sceneElements = <SceneElement>[];
 
-  /// The number of platform views in this frame.
-  int viewCount = 0;
+  /// The optimized rendering for this frame. This is set by calling
+  /// [optimizeRendering].
+  Rendering? optimizedRendering;
+
+  /// The picture recorders for the optimized rendering. This is set by calling
+  /// [optimizeRendering].
+  List<CkPictureRecorder>? optimizedCanvasRecorders;
+
+  /// A map from the original PictureLayer to the picture recorder it should go
+  /// into in the optimized rendering. This is set by calling
+  /// [optimizedRendering].
+  Map<PictureLayer, CkPictureRecorder>? pictureToOptimizedCanvasMap;
 }

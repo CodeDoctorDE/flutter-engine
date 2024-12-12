@@ -4,10 +4,11 @@
 
 import 'package:engine_build_configs/engine_build_configs.dart';
 
+import '../build_plan.dart';
 import '../build_utils.dart';
-import '../gn_utils.dart';
+import '../gn.dart';
+import '../label.dart';
 import 'command.dart';
-import 'flags.dart';
 
 /// The root 'build' command.
 final class BuildCommand extends CommandBase {
@@ -15,25 +16,14 @@ final class BuildCommand extends CommandBase {
   BuildCommand({
     required super.environment,
     required Map<String, BuilderConfig> configs,
-    super.verbose = false,
+    super.help = false,
     super.usageLineLength,
   }) {
-    builds = runnableBuilds(environment, configs, verbose);
-    debugCheckBuilds(builds);
-    addConfigOption(
-      environment,
+    builds = BuildPlan.configureArgParser(
       argParser,
-      builds,
-    );
-    argParser.addFlag(
-      rbeFlag,
-      defaultsTo: true,
-      help: 'RBE is enabled by default when available. Use --no-rbe to '
-          'disable it.',
-    );
-    argParser.addFlag(
-      ltoFlag,
-      help: 'Whether LTO should be enabled for a build. Default is disabled',
+      environment,
+      configs: configs,
+      help: help,
     );
   }
 
@@ -46,50 +36,64 @@ final class BuildCommand extends CommandBase {
   @override
   String get description => '''
 Builds the engine
-et build //flutter/fml/...             # Build all targets in `//flutter/fml/`
-et build //flutter/fml:fml_benchmarks  # Build a specific target in `//flutter/fml/`
+et build //flutter/fml/...             # Build all targets in `//flutter/fml` and its subdirectories.
+et build //flutter/fml:all             # Build all targets in `//flutter/fml`.
+et build //flutter/fml:fml_benchmarks  # Build a specific target in `//flutter/fml`.
 ''';
 
   @override
   Future<int> run() async {
-    final String configName = argResults![configFlag] as String;
-    final bool useRbe = argResults![rbeFlag] as bool;
-    final bool useLto = argResults![ltoFlag] as bool;
-    final String demangledName = demangleConfigName(environment, configName);
-    final Build? build =
-        builds.where((Build build) => build.name == demangledName).firstOrNull;
-    if (build == null) {
-      environment.logger.error('Could not find config $configName');
-      return 1;
-    }
-
-    final List<String> extraGnArgs = <String>[
-      if (!useRbe) '--no-rbe',
-      if (useLto) '--lto',
-      if (!useLto) '--no-lto',
-    ];
-
-    final List<BuildTarget>? selectedTargets = await targetsFromCommandLine(
+    final plan = BuildPlan.fromArgResults(
+      argResults!,
       environment,
-      build,
-      argResults!.rest,
+      builds: builds,
     );
-    if (selectedTargets == null) {
-      // The user typed something wrong and targetsFromCommandLine has already
-      // logged the error message.
+
+    final commandLineTargets = argResults!.rest;
+    if (commandLineTargets.isNotEmpty &&
+        !await ensureBuildDir(
+          environment,
+          plan.build,
+          enableRbe: plan.useRbe,
+        )) {
       return 1;
     }
 
-    // Chop off the '//' prefix.
-    final List<String> ninjaTargets = selectedTargets.map<String>(
-      (BuildTarget target) => target.label.substring('//'.length),
-    ).toList();
+    // Builds only accept labels as arguments, so convert patterns to labels.
+    // TODO(matanlurey): Can be optimized in cases where wildcards are not used.
+    final gn = Gn.fromEnvironment(environment);
+    final allTargets = <Label>{};
+    for (final pattern in commandLineTargets) {
+      final target = TargetPattern.parse(pattern);
+      final targets = await gn.desc(
+        'out/${plan.build.ninja.config}',
+        target,
+      );
+      allTargets.addAll(targets.map((target) => target.label));
+    }
+
+    // Warn that we've discarded some targets.
+    // Other warnings should have been emitted above, so if this ends up being
+    // unneccesarily noisy, we can remove it or limit it to verbose mode.
+    if (allTargets.length < commandLineTargets.length) {
+      // Report which targets were not found.
+      final notFound = commandLineTargets.where(
+        (target) => !allTargets.contains(Label.parse(target)),
+      );
+      environment.logger.warning(
+        'One or more targets specified did not match any build targets:\n\n'
+        '${notFound.join('\n')}',
+      );
+    }
 
     return runBuild(
       environment,
-      build,
-      extraGnArgs: extraGnArgs,
-      targets: ninjaTargets,
+      plan.build,
+      concurrency: plan.concurrency ?? 0,
+      extraGnArgs: plan.toGnArgs(),
+      targets: allTargets.toList(),
+      enableRbe: plan.useRbe,
+      rbeConfig: plan.toRbeConfig(),
     );
   }
 }
