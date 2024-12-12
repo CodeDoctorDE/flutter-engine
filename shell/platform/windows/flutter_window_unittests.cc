@@ -431,7 +431,8 @@ TEST_F(FlutterWindowTest, HandleMessage_WMTouch_Stylus) {
   touch_input.dwFlags = TOUCHEVENTF_DOWN | TOUCHEVENTF_PEN;
 
   EXPECT_CALL(win32window,
-              OnPointerDown(100.0, 200.0, kFlutterPointerDeviceKindStylus, 1, WM_LBUTTONDOWN))
+              OnPointerDown(100.0, 200.0, kFlutterPointerDeviceKindStylus, 1,
+                            WM_LBUTTONDOWN))
       .Times(1);
 
   LPARAM lparam = reinterpret_cast<LPARAM>(&touch_input);
@@ -451,7 +452,8 @@ TEST_F(FlutterWindowTest, HandleMessage_WMTouch_Touch) {
   touch_input.dwFlags = TOUCHEVENTF_DOWN;
 
   EXPECT_CALL(win32window,
-              OnPointerDown(100.0, 200.0, kFlutterPointerDeviceKindTouch, 1, WM_LBUTTONDOWN))
+              OnPointerDown(100.0, 200.0, kFlutterPointerDeviceKindTouch, 1,
+                            WM_LBUTTONDOWN))
       .Times(1);
 
   LPARAM lparam = reinterpret_cast<LPARAM>(&touch_input);
