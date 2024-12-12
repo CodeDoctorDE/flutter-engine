@@ -419,5 +419,44 @@ TEST_F(FlutterWindowTest, UpdateCursor) {
   EXPECT_EQ(cursor, ::LoadCursor(nullptr, IDC_IBEAM));
 }
 
+TEST_F(FlutterWindowTest, HandleMessage_WMTouch_Stylus) {
+  MockFlutterWindow win32window;
+  MockWindowBindingHandlerDelegate delegate;
+  win32window.SetView(&delegate);
+
+  TOUCHINPUT touch_input = {};
+  touch_input.dwID = 1;
+  touch_input.x = TOUCH_COORD_TO_PIXEL(100);
+  touch_input.y = TOUCH_COORD_TO_PIXEL(200);
+  touch_input.dwFlags = TOUCHEVENTF_DOWN | TOUCHEVENTF_PEN;
+
+  EXPECT_CALL(win32window,
+              OnPointerDown(100.0, 200.0, kFlutterPointerDeviceKindStylus, 1, WM_LBUTTONDOWN))
+      .Times(1);
+
+  LPARAM lparam = reinterpret_cast<LPARAM>(&touch_input);
+  WPARAM wparam = MAKEWPARAM(1, 0);
+  win32window.HandleMessage(WM_TOUCH, wparam, lparam);
+}
+
+TEST_F(FlutterWindowTest, HandleMessage_WMTouch_Touch) {
+  MockFlutterWindow win32window;
+  MockWindowBindingHandlerDelegate delegate;
+  win32window.SetView(&delegate);
+
+  TOUCHINPUT touch_input = {};
+  touch_input.dwID = 1;
+  touch_input.x = TOUCH_COORD_TO_PIXEL(100);
+  touch_input.y = TOUCH_COORD_TO_PIXEL(200);
+  touch_input.dwFlags = TOUCHEVENTF_DOWN;
+
+  EXPECT_CALL(win32window,
+              OnPointerDown(100.0, 200.0, kFlutterPointerDeviceKindTouch, 1, WM_LBUTTONDOWN))
+      .Times(1);
+
+  LPARAM lparam = reinterpret_cast<LPARAM>(&touch_input);
+  WPARAM wparam = MAKEWPARAM(1, 0);
+  win32window.HandleMessage(WM_TOUCH, wparam, lparam);
+}
 }  // namespace testing
 }  // namespace flutter
